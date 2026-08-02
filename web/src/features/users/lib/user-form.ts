@@ -19,15 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 import {
-  type PermissionCatalog,
   type AdminPermissionMatrix,
   normalizeAdminPermissions,
+  type PermissionCatalog,
 } from '@/lib/admin-permissions'
 import { quotaUnitsToDollars } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { User, UserFormData } from '../types'
 
 // ============================================================================
 // Form Schema
@@ -38,7 +38,7 @@ export const userFormSchema = z.object({
   display_name: z.string().optional(),
   password: z.string().optional(),
   role: z.number().optional(),
-  quota_dollars: z.number().min(0).optional(),
+  quota_dollars: z.number().optional(),
   group: z.string().optional(),
   remark: z.string().optional(),
   admin_permissions: z

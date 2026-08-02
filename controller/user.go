@@ -970,7 +970,7 @@ func DeleteUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
-	err = model.HardDeleteUserById(id)
+	err = model.DeleteUserById(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
