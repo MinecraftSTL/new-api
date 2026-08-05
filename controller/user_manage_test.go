@@ -134,6 +134,66 @@ func TestManageUserDemoteAdvancesAuthVersionAndRevokesSessionsOnce(t *testing.T)
 	assert.Equal(t, 1, sessionUpdateCount)
 }
 
+func TestManageUserQuotaAuditBelongsToManagedUser(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		action    string
+		wantQuota int
+	}{
+		{name: "add", mode: "add", action: "user.quota_add", wantQuota: 1200},
+		{name: "subtract", mode: "subtract", action: "user.quota_subtract", wantQuota: 800},
+		{name: "override", mode: "override", action: "user.quota_override", wantQuota: 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			operator := model.User{
+				Id: 9999, Username: "root-operator", Password: "password", Role: common.RoleRootUser,
+				Status: common.UserStatusEnabled, Group: "default", AffCode: "quota-operator-aff",
+			}
+			target := model.User{
+				Username: "managed-quota-user", Password: "password", Role: common.RoleCommonUser,
+				Status: common.UserStatusEnabled, Group: "default", Quota: 1000, AffCode: "quota-target-aff",
+			}
+			require.NoError(t, db.Create(&operator).Error)
+			require.NoError(t, db.Create(&target).Error)
+
+			recorder := performManageUserRequest(t, fmt.Sprintf(
+				`{"id":%d,"action":"add_quota","mode":%q,"value":200}`,
+				target.Id,
+				tt.mode,
+			))
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), `"success":true`)
+
+			var updated model.User
+			require.NoError(t, db.First(&updated, target.Id).Error)
+			assert.Equal(t, tt.wantQuota, updated.Quota)
+
+			var logs []model.Log
+			require.NoError(t, db.Where("type = ?", model.LogTypeManage).Find(&logs).Error)
+			require.Len(t, logs, 1)
+			assert.Equal(t, target.Id, logs[0].UserId)
+			assert.Equal(t, target.Username, logs[0].Username)
+
+			other, err := common.StrToMap(logs[0].Other)
+			require.NoError(t, err)
+			op, ok := other["op"].(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, tt.action, op["action"])
+			params, ok := op["params"].(map[string]interface{})
+			require.True(t, ok)
+			assert.EqualValues(t, target.Id, params["target_user_id"])
+			adminInfo, ok := other["admin_info"].(map[string]interface{})
+			require.True(t, ok)
+			assert.EqualValues(t, operator.Id, adminInfo["admin_id"])
+			assert.Equal(t, operator.Username, adminInfo["admin_username"])
+		})
+	}
+}
+
 func TestManageUserDeleteReturnsImmediatelyAndUnknownActionFails(t *testing.T) {
 	db := setupManageUserTestDB(t)
 	deleted := model.User{

@@ -108,6 +108,19 @@ func recordManageAuditFor(c *gin.Context, targetUserId int, action string, param
 	markAuditLogged(c)
 }
 
+// recordTargetUserManageAudit records a user management audit against the
+// managed user while retaining the administrator identity in admin_info.
+func recordTargetUserManageAudit(c *gin.Context, targetUserId int, action string, params map[string]interface{}) {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	if _, ok := params["target_user_id"]; !ok && targetUserId > 0 && targetUserId != c.GetInt("id") {
+		params["target_user_id"] = targetUserId
+	}
+	model.RecordOperationAuditLog(targetUserId, auditContentEN(action, params), c.ClientIP(), action, params, auditOperatorInfo(c), nil)
+	markAuditLogged(c)
+}
+
 // recordUserSecurityAudit 记录普通用户自己的安全敏感操作（如 passkey 绑定/解绑）。
 // 这类日志没有管理员操作者，不写 admin_info；同时不依赖 AdminAuth/RootAuth 的兜底。
 func recordUserSecurityAudit(c *gin.Context, userId int, action string, params map[string]interface{}) {

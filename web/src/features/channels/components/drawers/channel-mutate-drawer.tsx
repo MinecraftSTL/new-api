@@ -2215,9 +2215,8 @@ export function ChannelMutateDrawer({
                                 render={({ field }) => (
                                   <FormItem>
                                     <FormLabel>
-                                      {t('Full Base URL (supports')} {'{'}
-                                      {t('model')}
-                                      {'}'} {t('variable) *')}
+                                      {t('Full Base URL (supports')} {'{model}'}{' '}
+                                      {t('variable) *')}
                                     </FormLabel>
                                     <FormControl>
                                       <Input
@@ -2229,9 +2228,7 @@ export function ChannelMutateDrawer({
                                     </FormControl>
                                     <FormDescription>
                                       {t('Enter the complete URL, supports')}{' '}
-                                      {'{'}
-                                      {t('model')}
-                                      {'}'} {t('variable')}
+                                      {'{model}'} {t('variable')}
                                     </FormDescription>
                                     <FormMessage />
                                   </FormItem>
