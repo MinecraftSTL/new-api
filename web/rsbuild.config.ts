@@ -7,6 +7,8 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss'
 import { tanstackRouter } from '@tanstack/router-plugin/rspack'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const reactPath = path.resolve(__dirname, './node_modules/react')
+const reactDomPath = path.resolve(__dirname, './node_modules/react-dom')
 
 export default defineConfig(({ envMode }) => {
   const env = loadEnv({ mode: envMode, prefixes: ['VITE_'] })
@@ -60,6 +62,10 @@ export default defineConfig(({ envMode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+        // Keep every package on the same React runtime when dependency stores
+        // contain different semver-resolved copies of React.
+        react: reactPath,
+        'react-dom': reactDomPath,
       },
     },
     html: {
