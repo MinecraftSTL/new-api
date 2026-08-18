@@ -29,8 +29,13 @@ export type ParsedHttpStatusCodeRules = {
   invalidTokens: string[]
 }
 
+export type HttpStatusCodeRuleOptions = {
+  allowBadResponseBody?: boolean
+}
+
 export function parseHttpStatusCodeRules(
-  input: unknown
+  input: unknown,
+  options: HttpStatusCodeRuleOptions = {}
 ): ParsedHttpStatusCodeRules {
   const raw = (input ?? '').toString().trim()
   if (raw.length === 0) {
@@ -43,7 +48,7 @@ export function parseHttpStatusCodeRules(
     }
   }
 
-  const sanitized = raw.replace(/[，]/g, ',')
+  const sanitized = raw.replaceAll('，', ',')
   const segments = sanitized
     .split(',')
     .map((s) => s.trim())
@@ -53,7 +58,7 @@ export function parseHttpStatusCodeRules(
   const invalidTokens: string[] = []
 
   for (const segment of segments) {
-    const parsed = parseToken(segment)
+    const parsed = parseToken(segment, options.allowBadResponseBody === true)
     if (!parsed) {
       invalidTokens.push(segment)
     } else {
@@ -72,9 +77,7 @@ export function parseHttpStatusCodeRules(
   }
 
   const merged = mergeRanges(ranges)
-  const tokens = merged.map((r) =>
-    r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`
-  )
+  const tokens = merged.map(formatStatusCodeRange)
   const normalized = tokens.join(',')
 
   return {
@@ -86,12 +89,26 @@ export function parseHttpStatusCodeRules(
   }
 }
 
-function parseToken(token: string): StatusCodeRange | null {
-  const cleaned = token.trim().replace(/\s/g, '')
+function formatStatusCodeRange(range: StatusCodeRange): string {
+  if (range.start !== range.end) {
+    return `${range.start}-${range.end}`
+  }
+  if (range.start === 0) {
+    return '000'
+  }
+  return `${range.start}`
+}
+
+function parseToken(
+  token: string,
+  allowBadResponseBody: boolean
+): StatusCodeRange | null {
+  const cleaned = token.trim().replaceAll(/\s/g, '')
   if (!cleaned) return null
 
   const isValidCode = (code: number) =>
-    Number.isFinite(code) && code >= 100 && code <= 599
+    Number.isFinite(code) &&
+    ((allowBadResponseBody && code === 0) || (code >= 100 && code <= 599))
 
   if (cleaned.includes('-')) {
     const [a, b] = cleaned.split('-')
@@ -100,6 +117,7 @@ function parseToken(token: string): StatusCodeRange | null {
     const start = Number.parseInt(a, 10)
     const end = Number.parseInt(b, 10)
     if (!isValidCode(start) || !isValidCode(end) || start > end) return null
+    if ((start === 0) !== (end === 0)) return null
 
     return { start, end }
   }
@@ -123,7 +141,7 @@ function mergeRanges(ranges: StatusCodeRange[]): StatusCodeRange[] {
   )
 
   return sorted.reduce<StatusCodeRange[]>((merged, current) => {
-    const last = merged[merged.length - 1]
+    const last = merged.at(-1)
 
     if (!last || current.start > last.end + 1) {
       merged.push({ ...current })

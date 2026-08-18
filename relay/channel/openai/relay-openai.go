@@ -296,7 +296,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			var bodyMap map[string]interface{}
 			err = common.Unmarshal(responseBody, &bodyMap)
 			if err != nil {
-				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+				return &simpleResponse.Usage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			}
 			bodyMap["usage"] = simpleResponse.Usage
 			responseBody, _ = common.Marshal(bodyMap)
@@ -304,7 +304,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		if forceFormat {
 			responseBody, err = common.Marshal(simpleResponse)
 			if err != nil {
-				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+				return &simpleResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 			}
 		} else {
 			break
@@ -312,21 +312,21 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	case types.RelayFormatClaude:
 		convertResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatClaude, &simpleResponse)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			return &simpleResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 		claudeRespStr, err := common.Marshal(convertResult.Value)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			return &simpleResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 		responseBody = claudeRespStr
 	case types.RelayFormatGemini:
 		convertResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatGemini, &simpleResponse)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			return &simpleResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 		geminiRespStr, err := common.Marshal(convertResult.Value)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			return &simpleResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 		responseBody = geminiRespStr
 	}

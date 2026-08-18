@@ -75,7 +75,7 @@ func mokaEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *htt
 	fullTextResponse := embeddingResponseMoka2OpenAI(&baiduResponse)
 	jsonResponse, err := common.Marshal(fullTextResponse)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		return &fullTextResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(resp.StatusCode)

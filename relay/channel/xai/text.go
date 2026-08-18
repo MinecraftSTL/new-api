@@ -97,7 +97,7 @@ func xAIHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response
 	// new body
 	encodeJson, err := common.Marshal(xaiResponse)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		return xaiResponse.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 
 	service.IOCopyBytesGracefully(c, resp, encodeJson)

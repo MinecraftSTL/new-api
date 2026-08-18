@@ -14,11 +14,17 @@ type StatusCodeRange struct {
 	End   int
 }
 
+// RetryStatusCodeBadResponseBody is a pseudo status code used by the retry
+// policy when the upstream response body cannot be parsed into a usable
+// response. It is rendered as 000 in the operation setting.
+const RetryStatusCodeBadResponseBody = 0
+
 var AutomaticDisableStatusCodeRanges = []StatusCodeRange{{Start: 401, End: 401}}
 
-// Default behavior matches legacy hardcoded retry rules in controller/relay.go shouldRetry:
-// retry for 1xx, 3xx, 4xx(except 400/408), 5xx(except 504/524), and no retry for 2xx.
+// The HTTP defaults preserve the previous behavior while 000 enables retries
+// when a response body cannot yield billable usage.
 var AutomaticRetryStatusCodeRanges = []StatusCodeRange{
+	{Start: RetryStatusCodeBadResponseBody, End: RetryStatusCodeBadResponseBody},
 	{Start: 100, End: 199},
 	{Start: 300, End: 399},
 	{Start: 401, End: 407},
@@ -26,15 +32,6 @@ var AutomaticRetryStatusCodeRanges = []StatusCodeRange{
 	{Start: 500, End: 503},
 	{Start: 505, End: 523},
 	{Start: 525, End: 599},
-}
-
-var alwaysSkipRetryStatusCodes = map[int]struct{}{
-	504: {},
-	524: {},
-}
-
-var alwaysSkipRetryCodes = map[types.ErrorCode]struct{}{
-	types.ErrorCodeBadResponseBody: {},
 }
 
 func AutomaticDisableStatusCodesToString() string {
@@ -59,7 +56,7 @@ func AutomaticRetryStatusCodesToString() string {
 }
 
 func AutomaticRetryStatusCodesFromString(s string) error {
-	ranges, err := ParseHTTPStatusCodeRanges(s)
+	ranges, err := ParseRetryStatusCodeRanges(s)
 	if err != nil {
 		return err
 	}
@@ -67,21 +64,23 @@ func AutomaticRetryStatusCodesFromString(s string) error {
 	return nil
 }
 
-func IsAlwaysSkipRetryStatusCode(code int) bool {
-	_, exists := alwaysSkipRetryStatusCodes[code]
-	return exists
-}
-
-func IsAlwaysSkipRetryCode(errorCode types.ErrorCode) bool {
-	_, exists := alwaysSkipRetryCodes[errorCode]
-	return exists
-}
-
 func ShouldRetryByStatusCode(code int) bool {
-	if IsAlwaysSkipRetryStatusCode(code) {
-		return false
-	}
 	return shouldMatchStatusCodeRanges(AutomaticRetryStatusCodeRanges, code)
+}
+
+// RetryStatusCodeForError maps internal response parsing errors to the
+// configurable pseudo status code. Real HTTP status codes remain unchanged.
+func RetryStatusCodeForError(errorCode types.ErrorCode, statusCode int) int {
+	if errorCode == types.ErrorCodeBadResponseBody {
+		return RetryStatusCodeBadResponseBody
+	}
+	return statusCode
+}
+
+// ShouldRetryByError applies the configured retry status rules to an API
+// error, including the 000 mapping for ErrorCodeBadResponseBody.
+func ShouldRetryByError(errorCode types.ErrorCode, statusCode int) bool {
+	return ShouldRetryByStatusCode(RetryStatusCodeForError(errorCode, statusCode))
 }
 
 func statusCodeRangesToString(ranges []StatusCodeRange) string {
@@ -91,6 +90,10 @@ func statusCodeRangesToString(ranges []StatusCodeRange) string {
 	parts := make([]string, 0, len(ranges))
 	for _, r := range ranges {
 		if r.Start == r.End {
+			if r.Start == RetryStatusCodeBadResponseBody {
+				parts = append(parts, "000")
+				continue
+			}
 			parts = append(parts, strconv.Itoa(r.Start))
 			continue
 		}
@@ -100,7 +103,7 @@ func statusCodeRangesToString(ranges []StatusCodeRange) string {
 }
 
 func shouldMatchStatusCodeRanges(ranges []StatusCodeRange, code int) bool {
-	if code < 100 || code > 599 {
+	if code != RetryStatusCodeBadResponseBody && (code < 100 || code > 599) {
 		return false
 	}
 	for _, r := range ranges {
@@ -115,6 +118,14 @@ func shouldMatchStatusCodeRanges(ranges []StatusCodeRange, code int) bool {
 }
 
 func ParseHTTPStatusCodeRanges(input string) ([]StatusCodeRange, error) {
+	return parseStatusCodeRanges(input, false)
+}
+
+func ParseRetryStatusCodeRanges(input string) ([]StatusCodeRange, error) {
+	return parseStatusCodeRanges(input, true)
+}
+
+func parseStatusCodeRanges(input string, allowBadResponseBody bool) ([]StatusCodeRange, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil, nil
@@ -131,7 +142,7 @@ func ParseHTTPStatusCodeRanges(input string) ([]StatusCodeRange, error) {
 		if seg == "" {
 			continue
 		}
-		r, err := parseHTTPStatusCodeToken(seg)
+		r, err := parseHTTPStatusCodeToken(seg, allowBadResponseBody)
 		if err != nil {
 			invalid = append(invalid, seg)
 			continue
@@ -168,7 +179,7 @@ func ParseHTTPStatusCodeRanges(input string) ([]StatusCodeRange, error) {
 	return merged, nil
 }
 
-func parseHTTPStatusCodeToken(token string) (StatusCodeRange, error) {
+func parseHTTPStatusCodeToken(token string, allowBadResponseBody bool) (StatusCodeRange, error) {
 	token = strings.TrimSpace(token)
 	token = strings.ReplaceAll(token, " ", "")
 	if token == "" {
@@ -191,7 +202,10 @@ func parseHTTPStatusCodeToken(token string) (StatusCodeRange, error) {
 		if start > end {
 			return StatusCodeRange{}, fmt.Errorf("range start > end: %s", token)
 		}
-		if start < 100 || end > 599 {
+		if !isValidStatusCode(start, allowBadResponseBody) || !isValidStatusCode(end, allowBadResponseBody) {
+			return StatusCodeRange{}, fmt.Errorf("range out of bounds: %s", token)
+		}
+		if (start == RetryStatusCodeBadResponseBody) != (end == RetryStatusCodeBadResponseBody) {
 			return StatusCodeRange{}, fmt.Errorf("range out of bounds: %s", token)
 		}
 		return StatusCodeRange{Start: start, End: end}, nil
@@ -201,8 +215,12 @@ func parseHTTPStatusCodeToken(token string) (StatusCodeRange, error) {
 	if err != nil {
 		return StatusCodeRange{}, fmt.Errorf("invalid status code: %s", token)
 	}
-	if code < 100 || code > 599 {
+	if !isValidStatusCode(code, allowBadResponseBody) {
 		return StatusCodeRange{}, fmt.Errorf("status code out of bounds: %s", token)
 	}
 	return StatusCodeRange{Start: code, End: code}, nil
+}
+
+func isValidStatusCode(code int, allowBadResponseBody bool) bool {
+	return (allowBadResponseBody && code == RetryStatusCodeBadResponseBody) || (code >= 100 && code <= 599)
 }

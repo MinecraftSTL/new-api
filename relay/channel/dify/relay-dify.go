@@ -292,7 +292,7 @@ func difyHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respons
 	fullTextResponse.Choices = append(fullTextResponse.Choices, choice)
 	jsonResponse, err := json.Marshal(fullTextResponse)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		return &difyResponse.MetaData.Usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(resp.StatusCode)

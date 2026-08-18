@@ -193,7 +193,7 @@ func xunfeiHandler(c *gin.Context, textRequest dto.GeneralOpenAIRequest, appId s
 	response := responseXunfei2OpenAI(&xunfeiResponse)
 	jsonResponse, err := json.Marshal(response)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		return &usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	_, _ = c.Writer.Write(jsonResponse)

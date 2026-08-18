@@ -318,7 +318,7 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	case "AutomaticRetryStatusCodes":
-		_, err = operation_setting.ParseHTTPStatusCodeRanges(option.Value.(string))
+		_, err = operation_setting.ParseRetryStatusCodeRanges(option.Value.(string))
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

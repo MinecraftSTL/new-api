@@ -40,14 +40,15 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
+	upstreamUsage := relayconvert.UsageFromResponsesUsage(responsesResp.Usage)
 
 	chatResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatOpenAI, &responsesResp)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return upstreamUsage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	chatResp, ok := chatResult.Value.(*dto.OpenAITextResponse)
 	if !ok {
-		return nil, types.NewOpenAIError(fmt.Errorf("expected OpenAI chat response, got %T", chatResult.Value), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return upstreamUsage, types.NewOpenAIError(fmt.Errorf("expected OpenAI chat response, got %T", chatResult.Value), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if chatID := helper.GetResponseID(c); chatID != "" {
 		chatResp.Id = chatID
@@ -64,13 +65,13 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if info.RelayFormat != types.RelayFormatOpenAI {
 		targetResult, err := relayconvert.ConvertResponse(c, info, info.RelayFormat, chatResp)
 		if err != nil {
-			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 		responseValue = targetResult.Value
 	}
 	responseBody, err := common.Marshal(responseValue)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+		return usage, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -135,6 +136,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		}
 	}
 	if streamErr != nil {
+		if finalResponse != nil {
+			return relayconvert.UsageFromResponsesUsage(finalResponse.Usage), streamErr
+		}
 		return nil, streamErr
 	}
 	if err := scanner.Err(); err != nil {
@@ -152,11 +156,11 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 
 	chatResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatOpenAI, finalResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return relayconvert.UsageFromResponsesUsage(finalResponse.Usage), types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	chatResp, ok := chatResult.Value.(*dto.OpenAITextResponse)
 	if !ok {
-		return nil, types.NewOpenAIError(fmt.Errorf("expected OpenAI chat response, got %T", chatResult.Value), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return chatResult.Usage, types.NewOpenAIError(fmt.Errorf("expected OpenAI chat response, got %T", chatResult.Value), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if chatID := helper.GetResponseID(c); chatID != "" {
 		chatResp.Id = chatID
@@ -172,13 +176,13 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	if info.RelayFormat != types.RelayFormatOpenAI {
 		targetResult, err := relayconvert.ConvertResponse(c, info, info.RelayFormat, chatResp)
 		if err != nil {
-			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
 		responseValue = targetResult.Value
 	}
 	responseBody, err := common.Marshal(responseValue)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+		return usage, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -308,7 +312,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	})
 
 	if streamErr != nil {
-		return nil, streamErr
+		return state.Usage(), streamErr
 	}
 
 	usage := state.Usage()
@@ -322,11 +326,11 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	finalResults, err := relayconvert.FinalizeStreamResponse(c, info, state)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		return usage, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	for _, result := range finalResults {
 		if !sendStreamResult(result) {
-			return nil, streamErr
+			return usage, streamErr
 		}
 	}
 	if info.RelayFormat == types.RelayFormatOpenAI && info.ShouldIncludeUsage && usage != nil {

@@ -36,7 +36,7 @@ func siliconflowRerankHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 
 	jsonResponse, err := json.Marshal(rerankResp)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		return usage, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	c.Writer.Header().Set("Content-Type", "application/json")
 	c.Writer.WriteHeader(resp.StatusCode)

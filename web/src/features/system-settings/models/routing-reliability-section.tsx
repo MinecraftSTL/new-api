@@ -103,7 +103,8 @@ const routingReliabilitySchema = z
     }
 
     const retryParsed = parseHttpStatusCodeRules(
-      values.AutomaticRetryStatusCodes
+      values.AutomaticRetryStatusCodes,
+      { allowBadResponseBody: true }
     )
     if (!retryParsed.ok) {
       ctx.addIssue({
@@ -195,7 +196,8 @@ const normalizeDefaults = (
     defaults.AutomaticDisableStatusCodes ?? ''
   ).normalized,
   AutomaticRetryStatusCodes: parseHttpStatusCodeRules(
-    defaults.AutomaticRetryStatusCodes ?? ''
+    defaults.AutomaticRetryStatusCodes ?? '',
+    { allowBadResponseBody: true }
   ).normalized,
   'monitor_setting.auto_test_channel_enabled':
     defaults['monitor_setting.auto_test_channel_enabled'],
@@ -220,7 +222,8 @@ const normalizeFormValues = (
     values.AutomaticDisableStatusCodes
   ).normalized,
   AutomaticRetryStatusCodes: parseHttpStatusCodeRules(
-    values.AutomaticRetryStatusCodes
+    values.AutomaticRetryStatusCodes,
+    { allowBadResponseBody: true }
   ).normalized,
   'monitor_setting.auto_test_channel_enabled':
     values.monitor_setting.auto_test_channel_enabled,
@@ -279,7 +282,10 @@ export function RoutingReliabilitySection({
     [autoDisableStatusCodes]
   )
   const autoRetryParsed = useMemo(
-    () => parseHttpStatusCodeRules(autoRetryStatusCodes),
+    () =>
+      parseHttpStatusCodeRules(autoRetryStatusCodes, {
+        allowBadResponseBody: true,
+      }),
     [autoRetryStatusCodes]
   )
 

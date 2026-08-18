@@ -347,17 +347,7 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	code := openaiErr.StatusCode
-	if code >= 200 && code < 300 {
-		return false
-	}
-	if code < 100 || code > 599 {
-		return true
-	}
-	if operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) {
-		return false
-	}
-	return operation_setting.ShouldRetryByStatusCode(code)
+	return operation_setting.ShouldRetryByError(openaiErr.GetErrorCode(), openaiErr.StatusCode)
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
@@ -632,31 +622,8 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if taskErr.StatusCode == http.StatusTooManyRequests {
-		return true
-	}
-	if taskErr.StatusCode == 307 {
-		return true
-	}
-	if taskErr.StatusCode/100 == 5 {
-		// 超时不重试
-		if operation_setting.IsAlwaysSkipRetryStatusCode(taskErr.StatusCode) {
-			return false
-		}
-		return true
-	}
-	if taskErr.StatusCode == http.StatusBadRequest {
-		return false
-	}
-	if taskErr.StatusCode == 408 {
-		// azure处理超时不重试
-		return false
-	}
 	if taskErr.LocalError {
 		return false
 	}
-	if taskErr.StatusCode/100 == 2 {
-		return false
-	}
-	return true
+	return operation_setting.ShouldRetryByError(types.ErrorCode(taskErr.Code), taskErr.StatusCode)
 }

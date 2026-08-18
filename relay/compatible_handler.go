@@ -78,7 +78,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		applySystemPromptIfNeeded(c, info, request)
 		usage, newApiErr := chatCompletionsViaResponses(c, info, adaptor, request)
 		if newApiErr != nil {
-			return newApiErr
+			return settleBillingForResponseParseError(c, info, usage, newApiErr)
 		}
 
 		var containAudioTokens = usage.CompletionTokenDetails.AudioTokens > 0 || usage.PromptTokensDetails.AudioTokens > 0
@@ -205,6 +205,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
 	if newApiErr != nil {
+		newApiErr = settleBillingForResponseParseError(c, info, usage, newApiErr)
 		// reset status code 重置状态码
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return newApiErr
