@@ -65,30 +65,30 @@ func TestGetRandomSatisfiedChannelExhaustsPriorityBeforeDowngrade(t *testing.T) 
 			InitChannelCache()
 
 			attempted := make(map[int]struct{})
-			first, err := GetRandomSatisfiedChannel("default", "test-model", attempted, "", true)
+			first, err := GetRandomSatisfiedChannelByAttempts("default", "test-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, first)
 			assert.Contains(t, []int{101, 102}, first.Id)
 			attempted[first.Id] = struct{}{}
 
-			second, err := GetRandomSatisfiedChannel("default", "test-model", attempted, "", true)
+			second, err := GetRandomSatisfiedChannelByAttempts("default", "test-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, second)
 			assert.Contains(t, []int{101, 102}, second.Id)
 			assert.NotEqual(t, first.Id, second.Id)
 			attempted[second.Id] = struct{}{}
 
-			third, err := GetRandomSatisfiedChannel("default", "test-model", attempted, "", true)
+			third, err := GetRandomSatisfiedChannelByAttempts("default", "test-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, third)
 			assert.Equal(t, 103, third.Id)
 			attempted[third.Id] = struct{}{}
 
-			exhausted, err := GetRandomSatisfiedChannel("default", "test-model", attempted, "", false)
+			exhausted, err := GetRandomSatisfiedChannelByAttempts("default", "test-model", attempted, nil, false)
 			require.NoError(t, err)
 			assert.Nil(t, exhausted)
 
-			repeated, err := GetRandomSatisfiedChannel("default", "test-model", attempted, "", true)
+			repeated, err := GetRandomSatisfiedChannelByAttempts("default", "test-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, repeated)
 			assert.Equal(t, 103, repeated.Id)
@@ -105,14 +105,14 @@ func TestGetRandomSatisfiedChannelRecalculatesCurrentPriorities(t *testing.T) {
 			InitChannelCache()
 
 			attempted := map[int]struct{}{201: {}, 202: {}}
-			channel, err := GetRandomSatisfiedChannel("default", "dynamic-model", attempted, "", true)
+			channel, err := GetRandomSatisfiedChannelByAttempts("default", "dynamic-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 202, channel.Id)
 
 			createChannelSelectionTestChannel(t, 203, "default", "dynamic-model", 200, 100, true)
 			InitChannelCache()
-			channel, err = GetRandomSatisfiedChannel("default", "dynamic-model", attempted, "", true)
+			channel, err = GetRandomSatisfiedChannelByAttempts("default", "dynamic-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 203, channel.Id)
@@ -122,7 +122,7 @@ func TestGetRandomSatisfiedChannelRecalculatesCurrentPriorities(t *testing.T) {
 			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 201).Update("priority", newLowestPriority).Error)
 			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 201).Update("priority", newLowestPriority).Error)
 			InitChannelCache()
-			channel, err = GetRandomSatisfiedChannel("default", "dynamic-model", attempted, "", true)
+			channel, err = GetRandomSatisfiedChannelByAttempts("default", "dynamic-model", attempted, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 201, channel.Id)
@@ -138,7 +138,7 @@ func TestGetRandomSatisfiedChannelUsesCurrentWeightsAndEnabledState(t *testing.T
 			createChannelSelectionTestChannel(t, 302, "default", "mutable-model", 100, 0, true)
 			InitChannelCache()
 
-			channel, err := GetRandomSatisfiedChannel("default", "mutable-model", nil, "", true)
+			channel, err := GetRandomSatisfiedChannelByAttempts("default", "mutable-model", nil, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 301, channel.Id)
@@ -148,7 +148,7 @@ func TestGetRandomSatisfiedChannelUsesCurrentWeightsAndEnabledState(t *testing.T
 			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 302).Update("weight", 100).Error)
 			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 302).Update("weight", 100).Error)
 			InitChannelCache()
-			channel, err = GetRandomSatisfiedChannel("default", "mutable-model", nil, "", true)
+			channel, err = GetRandomSatisfiedChannelByAttempts("default", "mutable-model", nil, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 302, channel.Id)
@@ -156,7 +156,7 @@ func TestGetRandomSatisfiedChannelUsesCurrentWeightsAndEnabledState(t *testing.T
 			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 302).Update("status", common.ChannelStatusManuallyDisabled).Error)
 			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 302).Update("enabled", false).Error)
 			InitChannelCache()
-			channel, err = GetRandomSatisfiedChannel("default", "mutable-model", nil, "", true)
+			channel, err = GetRandomSatisfiedChannelByAttempts("default", "mutable-model", nil, nil, true)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 301, channel.Id)

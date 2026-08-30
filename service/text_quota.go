@@ -230,6 +230,9 @@ func composeTieredTextQuotaWithBase(relayInfo *relaycommon.RelayInfo, summary te
 		}
 	}
 
+	// Saturate the final sum, not just the surcharge: tieredQuota can be near
+	// MaxQuota and adding the surcharge could push the total past the
+	// single-request quota policy bound.
 	chargedSurcharge := summary.ToolCallSurchargeQuotaBeforeGroup.
 		Mul(decimal.NewFromFloat(summary.GroupRatio))
 	total, clamp := common.QuotaFromDecimalChecked(

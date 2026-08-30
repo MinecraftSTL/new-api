@@ -31,3 +31,9 @@ func ResponseText2Usage(c *gin.Context, responseText string, modeName string, pr
 func ValidUsage(usage *dto.Usage) bool {
 	return usage != nil && (usage.PromptTokens != 0 || usage.CompletionTokens != 0)
 }
+
+// ValidUsageForBilling accepts token-detail-only responses as well as the
+// prompt/completion counts checked by ValidUsage.
+func ValidUsageForBilling(usage *dto.Usage) bool {
+	return dto.HasOpenAIUsageTokens(effectiveBillingUsage(usage))
+}

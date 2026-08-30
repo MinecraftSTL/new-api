@@ -81,21 +81,26 @@ func shouldChargeViolationFee(err *types.NewAPIError) bool {
 	return HasCSAMViolationMarker(err)
 }
 
-func calcViolationFeeQuota(amount, groupRatio float64) (int, *common.QuotaClamp) {
+func calcViolationFeeQuota(amount, groupRatio float64) int {
+	quota, _ := calcViolationFeeQuotaChecked(amount, groupRatio)
+	return quota
+}
+
+func calcViolationFeeQuotaChecked(amount, groupRatio float64) (int, *common.QuotaClamp) {
 	if amount <= 0 {
 		return 0, nil
 	}
 	if groupRatio <= 0 {
 		return 0, nil
 	}
-	quota := decimal.NewFromFloat(amount).
+	quota, clamp := common.QuotaFromDecimalChecked(decimal.NewFromFloat(amount).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
-		Mul(decimal.NewFromFloat(groupRatio))
-	result, clamp := common.QuotaFromDecimalChecked(quota)
-	if result <= 0 {
+		Mul(decimal.NewFromFloat(groupRatio)).
+		Round(0))
+	if quota <= 0 {
 		return 0, clamp
 	}
-	return result, clamp
+	return quota, clamp
 }
 
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).
@@ -117,12 +122,12 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	}
 
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
-	feeQuota, clamp := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	feeQuota, clamp := calcViolationFeeQuotaChecked(settings.ViolationDeductionAmount, groupRatio)
 	noteQuotaClamp(relayInfo, clamp)
 	if feeQuota <= 0 {
 		return false
 	}
-	feeQuotaBeforeGroup, beforeGroupClamp := calcViolationFeeQuota(settings.ViolationDeductionAmount, 1)
+	feeQuotaBeforeGroup, beforeGroupClamp := calcViolationFeeQuotaChecked(settings.ViolationDeductionAmount, 1)
 	noteQuotaClamp(relayInfo, beforeGroupClamp)
 
 	if err := PostConsumeQuota(relayInfo, feeQuota, 0, true); err != nil {

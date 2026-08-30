@@ -3,6 +3,7 @@ package operation_setting
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,6 +17,24 @@ func TestParseHTTPStatusCodeRanges_CommaSeparated(t *testing.T) {
 	}, ranges)
 }
 
+func TestParseRetryStatusCodeRangesAcceptsBadResponseBody(t *testing.T) {
+	ranges, err := ParseRetryStatusCodeRanges("000,500-599")
+	require.NoError(t, err)
+	require.Equal(t, []StatusCodeRange{
+		{Start: RetryStatusCodeBadResponseBody, End: RetryStatusCodeBadResponseBody},
+		{Start: 500, End: 599},
+	}, ranges)
+
+	_, err = ParseHTTPStatusCodeRanges("000")
+	require.Error(t, err)
+	_, err = ParseRetryStatusCodeRanges("000-401")
+	require.Error(t, err)
+
+	ranges, err = ParseRetryStatusCodeRanges("000-000")
+	require.NoError(t, err)
+	require.Equal(t, []StatusCodeRange{{Start: 0, End: 0}}, ranges)
+}
+
 func TestParseHTTPStatusCodeRanges_MergeAndNormalize(t *testing.T) {
 	ranges, err := ParseHTTPStatusCodeRanges("500-505,504,401,403,402")
 	require.NoError(t, err)
@@ -26,7 +45,7 @@ func TestParseHTTPStatusCodeRanges_MergeAndNormalize(t *testing.T) {
 }
 
 func TestParseHTTPStatusCodeRanges_Invalid(t *testing.T) {
-	_, err := ParseHTTPStatusCodeRanges("99,600,foo,500-400,500-")
+	_, err := ParseHTTPStatusCodeRanges("99,600,foo,000-401,500-400,500-")
 	require.Error(t, err)
 }
 
@@ -62,13 +81,24 @@ func TestShouldRetryByStatusCode(t *testing.T) {
 
 	require.True(t, ShouldRetryByStatusCode(429))
 	require.True(t, ShouldRetryByStatusCode(500))
-	require.False(t, ShouldRetryByStatusCode(504))
-	require.False(t, ShouldRetryByStatusCode(524))
+	require.True(t, ShouldRetryByStatusCode(504))
+	require.True(t, ShouldRetryByStatusCode(524))
 	require.False(t, ShouldRetryByStatusCode(400))
 	require.False(t, ShouldRetryByStatusCode(200))
 }
 
+func TestShouldRetryByErrorUsesPseudoStatusForBadResponseBody(t *testing.T) {
+	orig := AutomaticRetryStatusCodeRanges
+	t.Cleanup(func() { AutomaticRetryStatusCodeRanges = orig })
+
+	AutomaticRetryStatusCodeRanges = []StatusCodeRange{{Start: 0, End: 0}}
+	require.True(t, ShouldRetryByError(types.ErrorCodeBadResponseBody, 500))
+	require.Equal(t, RetryStatusCodeBadResponseBody, RetryStatusCodeForError(types.ErrorCodeBadResponseBody, 500))
+	require.False(t, ShouldRetryByError(types.ErrorCodeBadResponse, 500))
+}
+
 func TestShouldRetryByStatusCode_DefaultMatchesLegacyBehavior(t *testing.T) {
+	require.True(t, ShouldRetryByStatusCode(0))
 	require.False(t, ShouldRetryByStatusCode(200))
 	require.False(t, ShouldRetryByStatusCode(400))
 	require.True(t, ShouldRetryByStatusCode(401))
@@ -80,8 +110,6 @@ func TestShouldRetryByStatusCode_DefaultMatchesLegacyBehavior(t *testing.T) {
 	require.True(t, ShouldRetryByStatusCode(599))
 }
 
-func TestIsAlwaysSkipRetryStatusCode(t *testing.T) {
-	require.True(t, IsAlwaysSkipRetryStatusCode(504))
-	require.True(t, IsAlwaysSkipRetryStatusCode(524))
-	require.False(t, IsAlwaysSkipRetryStatusCode(500))
+func TestAutomaticRetryStatusCodesToStringFormatsBadResponseBodyAs000(t *testing.T) {
+	require.Contains(t, AutomaticRetryStatusCodesToString(), "000")
 }

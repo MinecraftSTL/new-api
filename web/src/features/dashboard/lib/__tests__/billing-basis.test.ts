@@ -16,8 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import assert from 'node:assert/strict'
-import { describe, test } from 'node:test'
+import { describe, expect, test } from 'vitest'
 
 import { quotaForBillingBasis } from '../billing'
 import { buildDashboardFlowData } from '../flow'
@@ -35,12 +34,12 @@ describe('dashboard billing basis', () => {
       },
     ]
 
-    assert.deepEqual(calculateDashboardStats(rows, 'charged'), {
+    expect(calculateDashboardStats(rows, 'charged')).toEqual({
       totalQuota: 240,
       totalCount: 3,
       totalTokens: 80,
     })
-    assert.deepEqual(calculateDashboardStats(rows, 'before_group'), {
+    expect(calculateDashboardStats(rows, 'before_group')).toEqual({
       totalQuota: 100,
       totalCount: 3,
       totalTokens: 80,
@@ -48,7 +47,7 @@ describe('dashboard billing basis', () => {
   })
 
   test('treats an omitted base column as zero instead of charged quota', () => {
-    assert.equal(quotaForBillingBasis({ quota: 75 }, 'before_group'), 0)
+    expect(quotaForBillingBasis({ quota: 75 }, 'before_group')).toBe(0)
   })
 
   test('uses the selected quota column throughout channel flow aggregation', () => {
@@ -76,17 +75,15 @@ describe('dashboard billing basis', () => {
       billingBasis: 'before_group',
     })
 
-    assert.equal(charged.summary.quota, 240)
-    assert.equal(beforeGroup.summary.quota, 100)
-    assert.equal(
-      beforeGroup.flow.links.find((link) => link.target === 'channel:9')?.value,
-      100
-    )
-    assert.equal(
+    expect(charged.summary.quota).toBe(240)
+    expect(beforeGroup.summary.quota).toBe(100)
+    expect(
+      beforeGroup.flow.links.find((link) => link.target === 'channel:9')?.value
+    ).toBe(100)
+    expect(
       beforeGroup.filterOptions.nodes.find(
         (option) => option.value === 'channel:9'
-      )?.valueRaw,
-      100
-    )
+      )?.valueRaw
+    ).toBe(100)
   })
 })
