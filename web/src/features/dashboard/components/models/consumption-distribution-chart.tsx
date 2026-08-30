@@ -30,6 +30,7 @@ import {
 } from '@/features/dashboard/constants'
 import { processChartData } from '@/features/dashboard/lib'
 import type {
+  BillingBasis,
   ConsumptionDistributionChartType,
   QuotaDataItem,
 } from '@/features/dashboard/types'
@@ -46,6 +47,7 @@ interface ConsumptionDistributionChartProps {
   loading?: boolean
   timeGranularity?: TimeGranularity
   defaultChartType?: ConsumptionDistributionChartType
+  billingBasis?: BillingBasis
 }
 
 const CHART_TYPE_ICONS: Record<
@@ -104,9 +106,17 @@ export function ConsumptionDistributionChart(
         props.loading ? [] : props.data,
         timeGranularity,
         t,
-        chartRadius
+        chartRadius,
+        props.billingBasis
       ),
-    [props.data, props.loading, timeGranularity, t, chartRadius]
+    [
+      props.data,
+      props.loading,
+      timeGranularity,
+      t,
+      chartRadius,
+      props.billingBasis,
+    ]
   )
   const spec = chartType === 'bar' ? chartData.spec_line : chartData.spec_area
   const specType = typeof spec?.type === 'string' ? spec.type : chartType

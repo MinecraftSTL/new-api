@@ -19,17 +19,21 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, Flame, ShieldCheck, TrendingDown } from 'lucide-react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StaggerContainer, StaggerItem } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
-import type { QuotaDataItem } from '@/features/dashboard/types'
+import { quotaForBillingBasis } from '@/features/dashboard/lib'
+import type { BillingBasis, QuotaDataItem } from '@/features/dashboard/types'
 import { useStatus } from '@/hooks/use-status'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
 import { formatNumber, formatQuota } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -55,7 +59,8 @@ function buildSummarySparklines(
   data: QuotaDataItem[],
   currentBalance: number,
   start: number,
-  end: number
+  end: number,
+  billingBasis: BillingBasis = 'charged'
 ): Record<SummarySparklineKey, number[]> {
   const usage = Array.from({ length: SUMMARY_SPARKLINE_BUCKETS }, () => 0)
   const requests = Array.from({ length: SUMMARY_SPARKLINE_BUCKETS }, () => 0)
@@ -68,7 +73,7 @@ function buildSummarySparklines(
       end,
       SUMMARY_SPARKLINE_BUCKETS
     )
-    usage[index] += Number(item.quota) || 0
+    usage[index] += quotaForBillingBasis(item, billingBasis)
     requests[index] += Number(item.count) || 0
   }
 
@@ -140,6 +145,9 @@ export function SummaryCards() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const { status, loading } = useStatus()
+  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
+  const [adminBillingBasis, setAdminBillingBasis] =
+    useState<BillingBasis>('charged')
 
   const summaryTimeRange = useMemo(() => computeTimeRange(1), [])
   const remainQuota = Number(user?.quota ?? 0)
@@ -160,6 +168,27 @@ export function SummaryCards() {
         end_timestamp: summaryTimeRange.end_timestamp,
         default_time: 'hour',
       }),
+    staleTime: 60 * 1000,
+  })
+
+  const adminUsageTrendQuery = useQuery({
+    queryKey: [
+      'dashboard',
+      'overview',
+      'admin-cost-sparkline',
+      summaryTimeRange.start_timestamp,
+      summaryTimeRange.end_timestamp,
+    ],
+    queryFn: async () =>
+      getUserQuotaDates(
+        {
+          start_timestamp: summaryTimeRange.start_timestamp,
+          end_timestamp: summaryTimeRange.end_timestamp,
+          default_time: 'hour',
+        },
+        true
+      ),
+    enabled: isAdmin,
     staleTime: 60 * 1000,
   })
 
@@ -205,6 +234,28 @@ export function SummaryCards() {
       ),
     [usageTrendQuery.data?.data]
   )
+
+  const adminUsage = useMemo(() => {
+    const data = adminUsageTrendQuery.data?.data ?? []
+    return {
+      total: data.reduce(
+        (total, item) => total + quotaForBillingBasis(item, adminBillingBasis),
+        0
+      ),
+      sparkline: buildSummarySparklines(
+        data,
+        0,
+        summaryTimeRange.start_timestamp,
+        summaryTimeRange.end_timestamp,
+        adminBillingBasis
+      ).usage,
+    }
+  }, [
+    adminBillingBasis,
+    adminUsageTrendQuery.data?.data,
+    summaryTimeRange.end_timestamp,
+    summaryTimeRange.start_timestamp,
+  ])
 
   const healthLevel = getHealthLevel(remainQuota, recentUsage)
   const healthCfg = HEALTH_CONFIG[healthLevel]
@@ -349,6 +400,41 @@ export function SummaryCards() {
             <ArrowRight data-icon='inline-end' />
           </Button>
         </div>
+
+        {isAdmin && (
+          <div className='flex flex-col gap-3 border-t p-3 sm:flex-row sm:items-center sm:justify-between sm:p-5 xl:col-span-2'>
+            <div className='min-w-0 flex-1'>
+              <StatCard
+                title={t('Platform usage (last 24h)')}
+                value={formatQuota(adminUsage.total)}
+                description={
+                  adminBillingBasis === 'before_group'
+                    ? t('Showing quota before the group multiplier')
+                    : t('Showing quota after the group multiplier')
+                }
+                icon={Flame}
+                tone='accent-2'
+                sparkline={adminUsage.sparkline}
+                sparklineVariant='line'
+                loading={adminUsageTrendQuery.isLoading}
+              />
+            </div>
+            <div className='flex shrink-0 items-center justify-between gap-3 rounded-md border px-3 py-2 text-xs font-medium sm:justify-start'>
+              <Label htmlFor='overview_include_group_multiplier'>
+                {t('Include group multiplier')}
+              </Label>
+              <Switch
+                id='overview_include_group_multiplier'
+                size='sm'
+                checked={adminBillingBasis !== 'before_group'}
+                onCheckedChange={(checked) =>
+                  setAdminBillingBasis(checked ? 'charged' : 'before_group')
+                }
+                aria-label={t('Include group multiplier')}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -16,7 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { QuotaDataItem } from '@/features/dashboard/types'
+import type { BillingBasis, QuotaDataItem } from '@/features/dashboard/types'
+
+import { quotaForBillingBasis } from './billing'
 
 /**
  * Safe division: handles NaN and Infinity cases
@@ -27,7 +29,7 @@ export function safeDivide(
   precision: number = 3
 ): number {
   const result = value / divisor
-  if (isNaN(result) || !isFinite(result)) return 0
+  if (Number.isNaN(result) || !Number.isFinite(result)) return 0
   const factor = Math.pow(10, precision)
   return Math.round(result * factor) / factor
 }
@@ -35,10 +37,13 @@ export function safeDivide(
 /**
  * Calculate aggregated statistics from quota data
  */
-export function calculateDashboardStats(data: QuotaDataItem[]) {
+export function calculateDashboardStats(
+  data: QuotaDataItem[],
+  billingBasis: BillingBasis = 'charged'
+) {
   return data.reduce(
     (acc, item) => ({
-      totalQuota: acc.totalQuota + (Number(item.quota) || 0),
+      totalQuota: acc.totalQuota + quotaForBillingBasis(item, billingBasis),
       totalCount: acc.totalCount + (Number(item.count) || 0),
       totalTokens: acc.totalTokens + (Number(item.token_used) || 0),
     }),

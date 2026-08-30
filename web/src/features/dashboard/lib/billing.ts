@@ -16,30 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export {
-  cleanFilters,
-  buildQueryParams,
-  getSavedGranularity,
-  saveGranularity,
-  getDefaultDays,
-  getSavedChartPreferences,
-  saveChartPreferences,
-  buildDefaultDashboardFilters,
-} from './filters'
-export {
-  getLatencyColorClass,
-  testUrlLatency,
-  openExternalSpeedTest,
-  getDefaultPingStatus,
-} from './api-info'
-export { processChartData, processUserChartData } from './charts'
-export {
-  buildDashboardFlowData,
-  buildFlowSankeySpec,
-  flowNodeFilterFromSankeyDatum,
-  flowSankeyDatumValue,
-  getFlowStages,
-} from './flow'
-export { safeDivide, calculateDashboardStats } from './stats'
-export { DEFAULT_BILLING_BASIS, quotaForBillingBasis } from './billing'
-export { getPreviewText } from './text'
+import type { BillingBasis } from '@/features/dashboard/types'
+
+type QuotaColumns = {
+  quota?: number
+  quota_before_group?: number
+}
+
+export const DEFAULT_BILLING_BASIS: BillingBasis = 'charged'
+
+export function quotaForBillingBasis(
+  item: QuotaColumns,
+  billingBasis: BillingBasis = DEFAULT_BILLING_BASIS
+): number {
+  const rawQuota =
+    billingBasis === 'before_group' ? item.quota_before_group : item.quota
+  const quota = Number(rawQuota)
+  return Number.isFinite(quota) ? quota : 0
+}

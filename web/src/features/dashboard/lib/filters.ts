@@ -149,6 +149,7 @@ export function buildDefaultDashboardFilters(
     start_timestamp: start,
     end_timestamp: end,
     time_granularity: preferences.defaultTimeGranularity,
+    billing_basis: 'charged',
   }
 }
 

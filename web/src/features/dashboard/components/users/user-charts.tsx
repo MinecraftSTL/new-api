@@ -23,7 +23,9 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { IconBadge } from '@/components/ui/icon-badge'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTheme } from '@/context/theme-provider'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
@@ -84,6 +86,7 @@ export function UserCharts(props: UserChartsProps) {
   const timeGranularity = props.filters.timeGranularity
   const selectedRange = props.filters.selectedRange
   const topUserLimit = props.filters.topUserLimit
+  const billingBasis = props.filters.billingBasis
   const onFiltersChange = props.onFiltersChange
 
   const timeRange = useMemo(() => {
@@ -120,6 +123,16 @@ export function UserCharts(props: UserChartsProps) {
     [onFiltersChange, props.filters]
   )
 
+  const handleBillingBasisChange = useCallback(
+    (includeGroupMultiplier: boolean) => {
+      onFiltersChange({
+        ...props.filters,
+        billingBasis: includeGroupMultiplier ? 'charged' : 'before_group',
+      })
+    },
+    [onFiltersChange, props.filters]
+  )
+
   useEffect(() => {
     const updateTheme = async () => {
       setThemeReady(false)
@@ -149,9 +162,10 @@ export function UserCharts(props: UserChartsProps) {
         isLoading ? [] : (userData ?? []),
         timeGranularity,
         t,
-        topUserLimit
+        topUserLimit,
+        billingBasis
       ),
-    [userData, isLoading, timeGranularity, t, topUserLimit]
+    [billingBasis, isLoading, t, timeGranularity, topUserLimit, userData]
   )
 
   return (
@@ -174,6 +188,19 @@ export function UserCharts(props: UserChartsProps) {
             ))}
           </TabsList>
         </Tabs>
+
+        <div className='ml-auto flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-medium'>
+          <Label htmlFor='user_include_group_multiplier'>
+            {t('Include group multiplier')}
+          </Label>
+          <Switch
+            id='user_include_group_multiplier'
+            size='sm'
+            checked={billingBasis !== 'before_group'}
+            onCheckedChange={handleBillingBasisChange}
+            aria-label={t('Include group multiplier')}
+          />
+        </div>
 
         <Tabs
           value={timeGranularity}
@@ -244,7 +271,7 @@ export function UserCharts(props: UserChartsProps) {
                   themeReady &&
                   spec && (
                     <VChart
-                      key={`user-${chart.value}-${topUserLimit}-${resolvedTheme}`}
+                      key={`user-${chart.value}-${topUserLimit}-${billingBasis}-${resolvedTheme}`}
                       spec={{
                         ...spec,
                         theme: resolvedTheme === 'dark' ? 'dark' : 'light',

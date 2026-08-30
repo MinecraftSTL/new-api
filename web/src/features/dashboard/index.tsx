@@ -213,6 +213,7 @@ export function Dashboard() {
         timeGranularity: granularity,
         selectedRange: getDefaultDays(granularity),
         topUserLimit: 10,
+        billingBasis: 'charged',
       }
     }
   )
@@ -373,6 +374,7 @@ export function Dashboard() {
                     timeGranularity={
                       modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
                     }
+                    billingBasis={modelFilters.billing_basis}
                   />
                 </Suspense>
               </FadeIn>
@@ -385,6 +387,7 @@ export function Dashboard() {
                     timeGranularity={
                       modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
                     }
+                    billingBasis={modelFilters.billing_basis}
                   />
                 </Suspense>
               </FadeIn>

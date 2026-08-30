@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type {
+  BillingBasis,
   DashboardFlowGraph,
   DashboardFlowLink,
   DashboardFlowNode,
@@ -33,6 +34,7 @@ import type {
   ProcessedFlowData,
 } from '@/features/dashboard/types'
 
+import { quotaForBillingBasis } from './billing'
 import { getDashboardChartColors } from './charts'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -974,13 +976,20 @@ export function buildDashboardFlowData(
   metric: FlowMetric = 'quota',
   options: FlowBuildOptions = {}
 ): ProcessedFlowData {
+  // Normalize the selected billing column once so every flow aggregation,
+  // ranking, filter option, and summary uses the same basis.
+  const billingBasis: BillingBasis = options.billingBasis ?? 'charged'
+  const billingRows = rows.map((row) => ({
+    ...row,
+    quota: quotaForBillingBasis(row, billingBasis),
+  }))
   const role = options.role ?? DEFAULT_FLOW_ROLE
   const palette = options.colorPalette
   const ctx = {
     deletedTokenLabel: options.deletedTokenLabel,
   }
   const stages = resolveVisibleStages(role, options.visibleStages)
-  const userFilteredRows = filterRows(rows, options)
+  const userFilteredRows = filterRows(billingRows, options)
   const filteredRows = filterRowsByNodes(
     userFilteredRows,
     options.selectedNodes,
@@ -1007,7 +1016,7 @@ export function buildDashboardFlowData(
       }
     ),
     filterOptions: {
-      users: buildUserFilterOptions(rows, metric, palette),
+      users: buildUserFilterOptions(billingRows, metric, palette),
       nodes: buildNodeFilterOptions(
         userFilteredRows,
         metric,

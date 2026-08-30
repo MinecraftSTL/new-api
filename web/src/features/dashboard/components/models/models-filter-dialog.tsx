@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
@@ -150,8 +151,9 @@ export function ModelsFilter(props: ModelsFilterProps) {
     value: Date | string | undefined
   ) => {
     setFilters((prev) => ({ ...prev, [field]: value }))
-    if (field === 'start_timestamp' || field === 'end_timestamp')
+    if (field === 'start_timestamp' || field === 'end_timestamp') {
       setSelectedRange(null)
+    }
   }
 
   const handleQuickRange = (days: number) => {
@@ -257,12 +259,10 @@ export function ModelsFilter(props: ModelsFilterProps) {
           <div className='grid gap-2'>
             <Label htmlFor='time_granularity'>{t('Time Granularity')}</Label>
             <Select
-              items={[
-                ...TIME_GRANULARITY_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(option.label),
-                })),
-              ]}
+              items={TIME_GRANULARITY_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
               value={filters.time_granularity}
               onValueChange={(value) =>
                 handleChange('time_granularity', value as TimeGranularity)
@@ -295,6 +295,30 @@ export function ModelsFilter(props: ModelsFilterProps) {
                   placeholder={t('Filter by username')}
                   value={filters.username}
                   onChange={(e) => handleChange('username', e.target.value)}
+                />
+              </div>
+
+              <div className='flex items-center justify-between gap-4 rounded-md border p-3'>
+                <div className='grid gap-0.5'>
+                  <Label htmlFor='include_group_multiplier'>
+                    {t('Include group multiplier')}
+                  </Label>
+                  <p className='text-muted-foreground text-xs'>
+                    {filters.billing_basis === 'before_group'
+                      ? t('Showing quota before the group multiplier')
+                      : t('Showing quota after the group multiplier')}
+                  </p>
+                </div>
+                <Switch
+                  id='include_group_multiplier'
+                  checked={filters.billing_basis !== 'before_group'}
+                  onCheckedChange={(checked) =>
+                    handleChange(
+                      'billing_basis',
+                      checked ? 'charged' : 'before_group'
+                    )
+                  }
+                  aria-label={t('Include group multiplier')}
                 />
               </div>
             </>

@@ -30,6 +30,7 @@ import {
 } from '@/features/dashboard/constants'
 import { processChartData } from '@/features/dashboard/lib'
 import type {
+  BillingBasis,
   ModelAnalyticsChartTab,
   QuotaDataItem,
 } from '@/features/dashboard/types'
@@ -54,6 +55,7 @@ interface ModelChartsProps {
   loading?: boolean
   timeGranularity?: TimeGranularity
   defaultChartTab?: ModelAnalyticsChartTab
+  billingBasis?: BillingBasis
 }
 
 export function ModelCharts(props: ModelChartsProps) {
@@ -102,9 +104,17 @@ export function ModelCharts(props: ModelChartsProps) {
         props.loading ? [] : props.data,
         timeGranularity,
         t,
-        chartRadius
+        chartRadius,
+        props.billingBasis
       ),
-    [props.data, props.loading, timeGranularity, t, chartRadius]
+    [
+      props.data,
+      props.loading,
+      timeGranularity,
+      t,
+      chartRadius,
+      props.billingBasis,
+    ]
   )
 
   const spec = chartData[CHART_SPEC_KEYS[activeTab]]
