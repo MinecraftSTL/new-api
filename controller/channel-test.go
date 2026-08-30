@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -492,7 +491,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	info.SetEstimatePromptTokens(usage.PromptTokens)
 
-	quota, tieredResult := settleTestQuota(info, priceData, usage)
+	quota, quotaBeforeGroup, tieredResult := settleTestQuotaWithBase(info, priceData, usage)
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
@@ -504,6 +503,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		ModelName:        info.OriginModelName,
 		TokenName:        "模型测试",
 		Quota:            quota,
+		QuotaBeforeGroup: quotaBeforeGroup,
 		Content:          "模型测试",
 		UseTimeSeconds:   int(consumedTime),
 		IsStream:         info.IsStream,
@@ -532,25 +532,31 @@ func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Requ
 }
 
 func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage) (int, *billingexpr.TieredResult) {
+	quota, _, result := settleTestQuotaWithBase(info, priceData, usage)
+	return quota, result
+}
+
+func settleTestQuotaWithBase(info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage) (int, int, *billingexpr.TieredResult) {
 	if usage != nil && info != nil && info.TieredBillingSnapshot != nil {
 		isClaudeUsageSemantic := usage.UsageSemantic == "anthropic" || info.GetFinalRequestRelayFormat() == types.RelayFormatClaude
 		usedVars := billingexpr.UsedVars(info.TieredBillingSnapshot.ExprString)
 		if ok, quota, result := service.TryTieredSettle(info, service.BuildTieredTokenParams(usage, isClaudeUsageSemantic, usedVars)); ok {
-			return quota, result
+			return quota, service.TieredQuotaBeforeGroup(info, result), result
 		}
 	}
 
 	quota := 0
 	if !priceData.UsePrice {
-		quota = usage.PromptTokens + int(math.Round(float64(usage.CompletionTokens)*priceData.CompletionRatio))
-		quota = int(math.Round(float64(quota) * priceData.ModelRatio))
+		quota = usage.PromptTokens + common.QuotaRound(float64(usage.CompletionTokens)*priceData.CompletionRatio)
+		quota = common.QuotaRound(float64(quota) * priceData.ModelRatio)
 		if priceData.ModelRatio != 0 && quota <= 0 {
 			quota = 1
 		}
-		return quota, nil
+		return quota, quota, nil
 	}
 
-	return int(priceData.ModelPrice * common.QuotaPerUnit), nil
+	quota = common.QuotaFromFloat(priceData.ModelPrice * common.QuotaPerUnit)
+	return quota, quota, nil
 }
 
 func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {

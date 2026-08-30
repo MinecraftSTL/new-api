@@ -53,14 +53,15 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	}
 	attachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-		ChannelId: info.ChannelId,
-		ModelName: info.OriginModelName,
-		TokenName: tokenName,
-		Quota:     info.PriceData.Quota,
-		Content:   logContent,
-		TokenId:   info.TokenId,
-		Group:     info.UsingGroup,
-		Other:     other,
+		ChannelId:        info.ChannelId,
+		ModelName:        info.OriginModelName,
+		TokenName:        tokenName,
+		Quota:            info.PriceData.Quota,
+		QuotaBeforeGroup: info.PriceData.QuotaBeforeGroup,
+		Content:          logContent,
+		TokenId:          info.TokenId,
+		Group:            info.UsingGroup,
+		Other:            other,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -165,6 +166,7 @@ func taskModelName(task *model.Task) string {
 // 返回资金来源是否已成功退还；失败时保留 quota，供显式重试或人工对账。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool {
 	quota := task.Quota
+	quotaBeforeGroup := task.QuotaBeforeGroup
 	if quota == 0 {
 		return true
 	}
@@ -183,20 +185,22 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   model.LogTypeRefund,
-		Content:   "",
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     quota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
+		UserId:           task.UserId,
+		LogType:          model.LogTypeRefund,
+		Content:          "",
+		ChannelId:        task.ChannelId,
+		ModelName:        taskModelName(task),
+		Quota:            quota,
+		QuotaBeforeGroup: quotaBeforeGroup,
+		TokenId:          task.PrivateData.TokenId,
+		Group:            task.Group,
+		Other:            other,
 	})
 
 	// 4. 资金退款完成后再清除持久化标记。
 	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
 	task.Quota = 0
+	task.QuotaBeforeGroup = 0
 	if err := task.UpdateQuota(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("退款成功但清除 task quota 失败 task %s: %s", task.TaskID, err.Error()))
 	}
@@ -204,17 +208,32 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。
-// actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
+// actualQuota 和 actualQuotaBeforeGroup 是任务完成后的实际额度，与任务的预扣额度做差额结算。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) {
+	RecalculateTaskQuotaWithBase(ctx, task, actualQuota, actualQuota, reason, clamps...)
+}
+
+// RecalculateTaskQuotaWithBase performs settlement while retaining the
+// pre-group amount. The legacy wrapper above intentionally keeps its original
+// signature for provider integrations and older callers.
+func RecalculateTaskQuotaWithBase(ctx context.Context, task *model.Task, actualQuota int, actualQuotaBeforeGroup int, reason string, clamps ...*common.QuotaClamp) {
 	if actualQuota <= 0 {
 		return
 	}
 	preConsumedQuota := task.Quota
+	preConsumedQuotaBeforeGroup := task.QuotaBeforeGroup
 	quotaDelta := actualQuota - preConsumedQuota
+	quotaBeforeGroupDelta := actualQuotaBeforeGroup - preConsumedQuotaBeforeGroup
 
 	if quotaDelta == 0 {
+		if quotaBeforeGroupDelta != 0 {
+			task.QuotaBeforeGroup = actualQuotaBeforeGroup
+			if err := task.UpdateQuota(); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("差额结算回写 quota_before_group 失败 task %s: %s", task.TaskID, err.Error()))
+			}
+		}
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
 		return
@@ -238,39 +257,46 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
 
 	task.Quota = actualQuota
+	task.QuotaBeforeGroup = actualQuotaBeforeGroup
 	if err := task.UpdateQuota(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算回写 quota 失败 task %s: %s", task.TaskID, err.Error()))
 	}
 
 	var logType int
 	var logQuota int
+	var logQuotaBeforeGroup int
 	if quotaDelta > 0 {
 		logType = model.LogTypeConsume
 		logQuota = quotaDelta
+		logQuotaBeforeGroup = quotaBeforeGroupDelta
 		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
 		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	} else {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
+		logQuotaBeforeGroup = -quotaBeforeGroupDelta
 	}
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+	other["pre_consumed_quota_before_group"] = preConsumedQuotaBeforeGroup
+	other["actual_quota_before_group"] = actualQuotaBeforeGroup
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   reason,
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
+		UserId:           task.UserId,
+		LogType:          logType,
+		Content:          reason,
+		ChannelId:        task.ChannelId,
+		ModelName:        taskModelName(task),
+		Quota:            logQuota,
+		QuotaBeforeGroup: logQuotaBeforeGroup,
+		TokenId:          task.PrivateData.TokenId,
+		Group:            task.Group,
+		Other:            other,
+		NodeName:         task.PrivateData.NodeName,
 	})
 }
 
@@ -320,8 +346,9 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	}
 
 	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier（饱和转换，防止溢出成负数）
+	actualQuotaBeforeGroup, beforeGroupClamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * otherMultiplier)
 	actualQuota, clamp := common.QuotaFromFloatChecked(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason, clamp)
+	RecalculateTaskQuotaWithBase(ctx, task, actualQuota, actualQuotaBeforeGroup, reason, clamp, beforeGroupClamp)
 }

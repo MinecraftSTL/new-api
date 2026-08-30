@@ -433,6 +433,7 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	const userID, tokenID, channelID = 10, 10, 10
 	const initQuota, preConsumed = 10000, 2000
 	const actualQuota = 3000 // under-charged by 1000
+	const preConsumedBeforeGroup, actualQuotaBeforeGroup = 1000, 1500
 	const tokenRemain = 5000
 
 	seedUser(t, userID, initQuota)
@@ -440,8 +441,9 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.QuotaBeforeGroup = preConsumedBeforeGroup
 
-	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
+	RecalculateTaskQuotaWithBase(ctx, task, actualQuota, actualQuotaBeforeGroup, "adaptor adjustment")
 
 	// User quota should decrease by the delta (1000 additional charge)
 	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
@@ -451,12 +453,14 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 
 	// task.Quota should be updated to actualQuota
 	assert.Equal(t, actualQuota, task.Quota)
+	assert.Equal(t, actualQuotaBeforeGroup, task.QuotaBeforeGroup)
 
 	// Log type should be Consume (additional charge)
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+	assert.Equal(t, actualQuotaBeforeGroup-preConsumedBeforeGroup, log.QuotaBeforeGroup)
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {

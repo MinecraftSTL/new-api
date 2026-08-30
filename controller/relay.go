@@ -599,6 +599,7 @@ func RelayTask(c *gin.Context) {
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
 		task.Quota = result.Quota
+		task.QuotaBeforeGroup = result.QuotaBeforeGroup
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {

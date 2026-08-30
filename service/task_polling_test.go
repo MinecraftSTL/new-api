@@ -469,12 +469,14 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	legacyTask.TaskID = "legacy_timeout_without_refund"
 	legacyTask.Progress = "50%"
 	legacyTask.SubmitTime = 1771718399 // 2026-02-21 23:59:59 UTC
+	legacyTask.QuotaBeforeGroup = 900
 	require.NoError(t, model.DB.Create(legacyTask).Error)
 
 	modernTask := makeTask(userID, 0, modernTaskQuota, 0, BillingSourceWallet, 0)
 	modernTask.TaskID = "modern_timeout_with_refund"
 	modernTask.Progress = "50%"
 	modernTask.SubmitTime = 1771718400 // 2026-02-22 00:00:00 UTC
+	modernTask.QuotaBeforeGroup = 600
 	require.NoError(t, model.DB.Create(modernTask).Error)
 
 	previousTimeout := constant.TaskTimeoutMinutes
@@ -490,7 +492,9 @@ func TestSweepTimedOutTasksHonorsRefundRolloutBoundary(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusFailure, reloadedLegacy.Status)
 	assert.EqualValues(t, model.TaskStatusFailure, reloadedModern.Status)
 	assert.Zero(t, reloadedLegacy.Quota)
+	assert.Zero(t, reloadedLegacy.QuotaBeforeGroup)
 	assert.Zero(t, reloadedModern.Quota)
+	assert.Zero(t, reloadedModern.QuotaBeforeGroup)
 	assert.Contains(t, reloadedLegacy.FailReason, "旧系统遗留任务")
 	assert.Contains(t, reloadedModern.FailReason, "任务超时")
 	assert.Equal(t, initialQuota+modernTaskQuota, getUserQuota(t, userID))

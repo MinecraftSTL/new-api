@@ -114,9 +114,10 @@ func GetLogsStat(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"quota": stat.Quota,
-			"rpm":   stat.Rpm,
-			"tpm":   stat.Tpm,
+			"quota":              stat.Quota,
+			"quota_before_group": stat.QuotaBeforeGroup,
+			"rpm":                stat.Rpm,
+			"tpm":                stat.Tpm,
 		},
 	})
 	return

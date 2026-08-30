@@ -23,10 +23,11 @@ import (
 )
 
 type TaskSubmitResult struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	Platform       constant.TaskPlatform
-	Quota          int
+	UpstreamTaskID   string
+	TaskData         []byte
+	Platform         constant.TaskPlatform
+	Quota            int
+	QuotaBeforeGroup int
 	//PerCallPrice   types.PriceData
 }
 
@@ -200,6 +201,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
+
+		quotaBeforeGroupWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.QuotaBeforeGroup))
+		quotaBeforeGroup, beforeGroupClamp := common.QuotaFromFloatChecked(quotaBeforeGroupWithRatios)
+		info.PriceData.QuotaBeforeGroup = quotaBeforeGroup
+		noteTaskQuotaClamp(info, beforeGroupClamp)
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
@@ -242,37 +248,50 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
+	finalQuotaBeforeGroup := info.PriceData.QuotaBeforeGroup
 	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
-		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
+		if adjustedQuota, adjustedQuotaBeforeGroup, ok := recalcQuotaFromRatiosWithBase(info, adjustedRatios); ok {
 			// 基于调整后的 ratios 重新计算 quota
 			finalQuota = adjustedQuota
+			finalQuotaBeforeGroup = adjustedQuotaBeforeGroup
 			info.PriceData.ReplaceOtherRatios(adjustedRatios)
 			info.PriceData.Quota = finalQuota
+			info.PriceData.QuotaBeforeGroup = finalQuotaBeforeGroup
 		}
 	}
 
 	return &TaskSubmitResult{
-		UpstreamTaskID: upstreamTaskID,
-		TaskData:       taskData,
-		Platform:       platform,
-		Quota:          finalQuota,
+		UpstreamTaskID:   upstreamTaskID,
+		TaskData:         taskData,
+		Platform:         platform,
+		Quota:            finalQuota,
+		QuotaBeforeGroup: finalQuotaBeforeGroup,
 	}, nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
 // 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) (int, bool) {
+	quota, _, ok := recalcQuotaFromRatiosWithBase(info, ratios)
+	return quota, ok
+}
+
+func recalcQuotaFromRatiosWithBase(info *relaycommon.RelayInfo, ratios map[string]float64) (int, int, bool) {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
 	baseQuota := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.Quota))
+	baseQuotaBeforeGroup := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.QuotaBeforeGroup))
 	priceData := info.PriceData
 	if !priceData.ReplaceOtherRatios(ratios) {
-		return 0, false
+		return 0, 0, false
 	}
 	// 应用新的 ratios
 	result := priceData.ApplyOtherRatiosToFloat(baseQuota)
 	quota, clamp := common.QuotaFromFloatChecked(result)
 	noteTaskQuotaClamp(info, clamp)
-	return quota, true
+	resultBeforeGroup := priceData.ApplyOtherRatiosToFloat(baseQuotaBeforeGroup)
+	quotaBeforeGroup, beforeGroupClamp := common.QuotaFromFloatChecked(resultBeforeGroup)
+	noteTaskQuotaClamp(info, beforeGroupClamp)
+	return quota, quotaBeforeGroup, true
 }
 
 // noteTaskQuotaClamp records the first quota saturation event onto the task's

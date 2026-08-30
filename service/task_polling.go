@@ -68,6 +68,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			// 旧系统任务明确不退款，随终态 CAS 一并清掉 quota，
 			// 避免留下可再次退款的计费状态。
 			task.Quota = 0
+			task.QuotaBeforeGroup = 0
 		} else {
 			task.FailReason = reason
 		}
@@ -648,7 +649,12 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
-		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+		actualQuotaBeforeGroup := actualQuota
+		var clamp *common.QuotaClamp
+		if bc := task.PrivateData.BillingContext; bc != nil && bc.GroupRatio > 0 {
+			actualQuotaBeforeGroup, clamp = common.QuotaRoundChecked(float64(actualQuota) / bc.GroupRatio)
+		}
+		RecalculateTaskQuotaWithBase(ctx, task, actualQuota, actualQuotaBeforeGroup, "adaptor计费调整", clamp)
 		return
 	}
 	// 2. 回退到 token 重算

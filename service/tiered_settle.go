@@ -3,6 +3,7 @@ package service
 import (
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -186,4 +187,22 @@ func TryTieredSettle(relayInfo *relaycommon.RelayInfo, params billingexpr.TokenP
 	noteQuotaClamp(relayInfo, tr.Clamp)
 
 	return true, tr.ActualQuotaAfterGroup, &tr
+}
+
+// TieredQuotaBeforeGroup returns the rounded settlement quota before the
+// request's group multiplier. When settlement falls back to pre-consume, the
+// captured estimate is the only stable base-cost value available.
+func TieredQuotaBeforeGroup(relayInfo *relaycommon.RelayInfo, result *billingexpr.TieredResult) int {
+	if relayInfo == nil {
+		return 0
+	}
+	quotaBeforeGroup := float64(0)
+	if result != nil {
+		quotaBeforeGroup = result.ActualQuotaBeforeGroup
+	} else if snap := relayInfo.TieredBillingSnapshot; snap != nil {
+		quotaBeforeGroup = snap.EstimatedQuotaBeforeGroup
+	}
+	quota, clamp := common.QuotaRoundChecked(quotaBeforeGroup)
+	noteQuotaClamp(relayInfo, clamp)
+	return quota
 }
