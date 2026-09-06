@@ -117,7 +117,7 @@ export interface LogOtherData {
   admin_info?: {
     is_multi_key?: boolean
     multi_key_index?: number
-    use_channel?: number[]
+    use_channel?: Array<number | string>
     local_count_tokens?: boolean
     usage_billing_path?: UsageBillingPath | string
     channel_affinity?: ChannelAffinityInfo
@@ -142,6 +142,8 @@ export interface LogOtherData {
       original: number
       clamped: number
     }
+    // Reject / intercept reason (admin only)
+    reject_reason?: string
     task_plugin?: TaskPluginInfo
   }
   root_info?: {
@@ -236,8 +238,6 @@ export interface LogOtherData {
   violation_fee_code?: string
   violation_fee_marker?: string
   fee_quota?: number
-  // Reject / intercept reason (admin)
-  reject_reason?: string
   // Task-related fields (for refund logs, type=6)
   is_task?: boolean
   task_id?: string

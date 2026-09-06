@@ -124,9 +124,8 @@ function buildTypeDetailSegments(
   other: LogOtherData | null,
   t: (key: string, opts?: Record<string, unknown>) => string
 ): DetailSegment[] {
-  // Audit (type=3) and login (type=7) logs: render localized content from the
-  // structured op descriptor instead of the raw (English-fallback) content.
-  if (log.type === 3 || log.type === 7) {
+  // Top-up, audit, and login logs can carry a localized operation descriptor.
+  if (log.type === 1 || log.type === 3 || log.type === 7) {
     const text = renderAuditContent(other, t)
     return text ? [{ text }] : []
   }
@@ -372,15 +371,42 @@ export function useCommonLogsColumns(
                     <div className='flex max-w-[160px] flex-col gap-0.5' />
                   }
                 >
-                  <div className='relative inline-flex w-fit items-center gap-1'>
-                    <StatusBadge
-                      label={channelIdDisplay}
-                      autoColor={String(log.channel)}
-                      copyText={String(log.channel)}
-                      size='sm'
-                      showDot={false}
-                      className='font-mono'
-                    />
+                  <div className='inline-flex w-fit items-center gap-1'>
+                    <div className='relative inline-flex'>
+                      <StatusBadge
+                        label={channelIdDisplay}
+                        autoColor={String(log.channel)}
+                        copyText={String(log.channel)}
+                        size='sm'
+                        showDot={false}
+                        className='font-mono'
+                      />
+                      {affinity && (
+                        <button
+                          type='button'
+                          className='focus-visible:ring-ring absolute -top-1 -right-1 inline-flex size-4 items-center justify-center rounded-full leading-none text-amber-500 focus-visible:ring-2 focus-visible:outline-none'
+                          aria-label={t('Channel Affinity')}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setAffinityTarget({
+                              rule_name: affinity.rule_name || '',
+                              using_group:
+                                affinity.using_group ||
+                                affinity.selected_group ||
+                                '',
+                              key_hint: affinity.key_hint || '',
+                              key_fp: affinity.key_fp || '',
+                            })
+                            setAffinityDialogOpen(true)
+                          }}
+                        >
+                          <Sparkles
+                            className='size-3 fill-current'
+                            aria-hidden='true'
+                          />
+                        </button>
+                      )}
+                    </div>
                     {showMultiKeyIndex && (
                       <StatusBadge
                         label={String(multiKeyIndex)}
@@ -422,27 +448,6 @@ export function useCommonLogsColumns(
                           </div>
                         </PopoverContent>
                       </Popover>
-                    )}
-                    {affinity && (
-                      <button
-                        type='button'
-                        className='absolute -top-1 -right-1 leading-none text-amber-500'
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setAffinityTarget({
-                            rule_name: affinity.rule_name || '',
-                            using_group:
-                              affinity.using_group ||
-                              affinity.selected_group ||
-                              '',
-                            key_hint: affinity.key_hint || '',
-                            key_fp: affinity.key_fp || '',
-                          })
-                          setAffinityDialogOpen(true)
-                        }}
-                      >
-                        <Sparkles className='size-3 fill-current' />
-                      </button>
                     )}
                   </div>
                   {log.channel_name && (
@@ -739,6 +744,7 @@ export function useCommonLogsColumns(
       accessorKey: 'content',
       header: t('Details'),
       cell: function DetailsCell({ row }) {
+        const { t } = useTranslation()
         const [dialogOpen, setDialogOpen] = useState(false)
         const log = row.original
         const other = parseLogOther(log.other)
