@@ -216,51 +216,6 @@ func GetRandomSatisfiedChannel(
 	return nil, errors.New("channel not found")
 }
 
-// GetRandomSatisfiedChannelByAttempts selects an unattempted channel across
-// all eligible priority layers. The request retry path uses this variant so
-// attempted channel IDs remain global when automatic groups are traversed.
-func GetRandomSatisfiedChannelByAttempts(
-	group string,
-	model string,
-	attemptedChannelIDs map[int]struct{},
-	filters []dto.ChannelFilter,
-	allowLowestPriorityRepeat bool,
-) (*Channel, error) {
-	if !common.MemoryCacheEnabled {
-		return GetChannelByAttempts(group, model, attemptedChannelIDs, filters, allowLowestPriorityRepeat)
-	}
-
-	channelSyncLock.RLock()
-	defer channelSyncLock.RUnlock()
-
-	channels, _ := filterCandidateIDs(group2model2channels[group][model], model, filters)
-	if len(channels) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
-	}
-	if len(channels) == 0 {
-		return nil, nil
-	}
-
-	candidates := make([]channelSelectionCandidate, 0, len(channels))
-	for _, channelID := range channels {
-		channel, ok := channelsIDM[channelID]
-		if !ok {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
-		}
-		candidates = append(candidates, channelSelectionCandidate{
-			channelID: channelID,
-			priority:  channel.GetPriority(),
-			weight:    channel.GetWeight(),
-		})
-	}
-	selectedID, ok := selectChannelCandidateID(candidates, attemptedChannelIDs, allowLowestPriorityRepeat)
-	if !ok {
-		return nil, nil
-	}
-	return channelsIDM[selectedID], nil
-}
-
 func loadCachedChannelSelectionCandidates(groups []string, modelName string, filters []dto.ChannelFilter) ([]channelSelectionCandidate, error) {
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()

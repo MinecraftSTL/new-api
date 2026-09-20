@@ -188,49 +188,6 @@ func loadDatabaseChannelSelectionCandidates(groups []string, modelName string, f
 	return candidates, nil
 }
 
-// GetChannelByAttempts selects the highest-priority channel that has not been
-// attempted yet. It is used by the request retry path, which tracks attempts
-// across groups instead of mapping one retry directly to one priority.
-func GetChannelByAttempts(
-	group string,
-	model string,
-	attemptedChannelIDs map[int]struct{},
-	filters []dto.ChannelFilter,
-	allowLowestPriorityRepeat bool,
-) (*Channel, error) {
-	abs, err := loadEnabledAbilities(group, model)
-	if err != nil {
-		return nil, err
-	}
-	abs = filterAbilitiesByConstraints(abs, model, filters)
-	if len(abs) == 0 {
-		return nil, nil
-	}
-
-	candidates := make([]channelSelectionCandidate, 0, len(abs))
-	for _, ability := range abs {
-		priority := int64(0)
-		if ability.Priority != nil {
-			priority = *ability.Priority
-		}
-		candidates = append(candidates, channelSelectionCandidate{
-			channelID: ability.ChannelId,
-			priority:  priority,
-			weight:    int(ability.Weight),
-		})
-	}
-	channelID, ok := selectChannelCandidateID(candidates, attemptedChannelIDs, allowLowestPriorityRepeat)
-	if !ok {
-		return nil, nil
-	}
-
-	channel := Channel{}
-	if err = DB.First(&channel, "id = ?", channelID).Error; err != nil {
-		return nil, err
-	}
-	return &channel, nil
-}
-
 func loadEnabledAbilities(group string, model string) ([]Ability, error) {
 	var abilities []Ability
 	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).Find(&abilities).Error
