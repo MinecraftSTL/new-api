@@ -19,9 +19,11 @@ import (
 func resetAutoGroupChannelSelectionTest(t *testing.T) {
 	t.Helper()
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
+	originalRetryTimes := common.RetryTimes
 	originalAutoGroups := setting.AutoGroups2JsonString()
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	common.MemoryCacheEnabled = true
+	common.RetryTimes = 1
 	require.NoError(t, model.DB.AutoMigrate(&model.Ability{}))
 	require.NoError(t, model.DB.Exec("DELETE FROM abilities").Error)
 	require.NoError(t, model.DB.Exec("DELETE FROM channels").Error)
@@ -34,6 +36,7 @@ func resetAutoGroupChannelSelectionTest(t *testing.T) {
 		require.NoError(t, setting.UpdateAutoGroupsByJsonString(originalAutoGroups))
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
+		common.RetryTimes = originalRetryTimes
 		model.InitChannelCache()
 	})
 }
@@ -75,59 +78,45 @@ func newAutoGroupChannelSelectionContext(crossGroupRetry bool, attemptedChannelI
 
 func TestCacheGetRandomSatisfiedChannelUsesGlobalAttemptsAcrossAutoGroups(t *testing.T) {
 	resetAutoGroupChannelSelectionTest(t)
+	common.RetryTimes = 2
 	createAutoGroupChannelSelectionTestChannel(t, 301, "default,vip", 100)
 	createAutoGroupChannelSelectionTestChannel(t, 302, "default", 50)
 	createAutoGroupChannelSelectionTestChannel(t, 303, "vip", 50)
 	model.InitChannelCache()
 
+	retry := 0
 	ctx := newAutoGroupChannelSelectionContext(true, "301")
-	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "default")
+	param := &RetryParam{
 		Ctx:         ctx,
 		TokenGroup:  "auto",
 		ModelName:   "auto-model",
 		RequestPath: "/v1/chat/completions",
-	})
+		Retry:       &retry,
+	}
+
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 301, channel.Id)
+	assert.Equal(t, "default", selectedGroup)
+
+	ctx.Set("use_channel", []string{"301", "301"})
+	param.IncreaseRetry()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 302, channel.Id)
 	assert.Equal(t, "default", selectedGroup)
 
-	ctx.Set("use_channel", []string{"301", "302"})
-	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
-		Ctx:         ctx,
-		TokenGroup:  "auto",
-		ModelName:   "auto-model",
-		RequestPath: "/v1/chat/completions",
-	})
+	ctx.Set("use_channel", []string{"301", "301", "302"})
+	param.IncreaseRetry()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 303, channel.Id)
 	assert.Equal(t, "vip", selectedGroup)
-
-	ctx.Set("use_channel", []string{"301", "302", "303"})
-	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
-		Ctx:         ctx,
-		TokenGroup:  "auto",
-		ModelName:   "auto-model",
-		RequestPath: "/v1/chat/completions",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, channel)
-	assert.Equal(t, 303, channel.Id)
-	assert.Equal(t, "vip", selectedGroup)
-
-	createAutoGroupChannelSelectionTestChannel(t, 304, "default", 200)
-	model.InitChannelCache()
-	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
-		Ctx:         ctx,
-		TokenGroup:  "auto",
-		ModelName:   "auto-model",
-		RequestPath: "/v1/chat/completions",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, channel)
-	assert.Equal(t, 304, channel.Id)
-	assert.Equal(t, "default", selectedGroup)
+	assert.Equal(t, "vip", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 }
 
 func TestCacheGetRandomSatisfiedChannelStaysInCurrentAutoGroupWhenCrossGroupRetryDisabled(t *testing.T) {

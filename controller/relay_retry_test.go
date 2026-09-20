@@ -63,3 +63,12 @@ func TestShouldRetryMapsBadResponseBodyTo000(t *testing.T) {
 	parseErr = types.NewError(parseErr, parseErr.GetErrorCode(), types.ErrOptionWithSkipRetry())
 	require.False(t, shouldRetry(c, parseErr, 1))
 }
+
+func TestAddUsedChannelPreservesRepeatedAttempts(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	addUsedChannel(c, 101)
+	addUsedChannel(c, 101)
+	addUsedChannel(c, 202)
+
+	require.Equal(t, []string{"101", "101", "202"}, c.GetStringSlice("use_channel"))
+}
