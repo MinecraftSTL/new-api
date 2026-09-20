@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
@@ -46,6 +47,7 @@ import type {
   DashboardChartPreferences,
   DashboardFilters,
 } from '@/features/dashboard/types'
+import { ROLE } from '@/lib/roles'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -100,12 +102,13 @@ export function ModelsFilter(props: ModelsFilterProps) {
   const { t } = useTranslation()
   // 使用已缓存的用户数据，避免重复调用 API
   const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = user?.role && user.role >= 10
+  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
 
   const [open, setOpen] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(
     () =>
-      props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
+      props.currentFilters ??
+      buildDefaultDashboardFilters(props.preferences, isAdmin)
   )
   const [selectedRange, setSelectedRange] = useState<number | null>(() =>
     detectQuickRangeDays(props.currentFilters)
@@ -116,7 +119,8 @@ export function ModelsFilter(props: ModelsFilterProps) {
     // opens so a previously applied manual range is preserved.
     if (nextOpen) {
       const applied =
-        props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
+        props.currentFilters ??
+        buildDefaultDashboardFilters(props.preferences, isAdmin)
       setFilters(applied)
       setSelectedRange(detectQuickRangeDays(applied))
     }
@@ -136,7 +140,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
     const days = props.preferences.defaultTimeRangeDays
     const { start, end } = getRollingDateRange(days)
     setFilters({
-      ...buildDefaultDashboardFilters(props.preferences),
+      ...buildDefaultDashboardFilters(props.preferences, isAdmin),
       start_timestamp: start,
       end_timestamp: end,
     })
@@ -150,8 +154,9 @@ export function ModelsFilter(props: ModelsFilterProps) {
     value: Date | string | undefined
   ) => {
     setFilters((prev) => ({ ...prev, [field]: value }))
-    if (field === 'start_timestamp' || field === 'end_timestamp')
+    if (field === 'start_timestamp' || field === 'end_timestamp') {
       setSelectedRange(null)
+    }
   }
 
   const handleQuickRange = (days: number) => {
@@ -257,12 +262,10 @@ export function ModelsFilter(props: ModelsFilterProps) {
           <div className='grid gap-2'>
             <Label htmlFor='time_granularity'>{t('Time Granularity')}</Label>
             <Select
-              items={[
-                ...TIME_GRANULARITY_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(option.label),
-                })),
-              ]}
+              items={TIME_GRANULARITY_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
               value={filters.time_granularity}
               onValueChange={(value) =>
                 handleChange('time_granularity', value as TimeGranularity)
@@ -295,6 +298,30 @@ export function ModelsFilter(props: ModelsFilterProps) {
                   placeholder={t('Filter by username')}
                   value={filters.username}
                   onChange={(e) => handleChange('username', e.target.value)}
+                />
+              </div>
+
+              <div className='flex items-center justify-between gap-4 rounded-md border p-3'>
+                <div className='grid gap-0.5'>
+                  <Label htmlFor='include_group_multiplier'>
+                    {t('Include group multiplier')}
+                  </Label>
+                  <p className='text-muted-foreground text-xs'>
+                    {filters.billing_basis === 'before_group'
+                      ? t('Showing quota before the group multiplier')
+                      : t('Showing quota after the group multiplier')}
+                  </p>
+                </div>
+                <Switch
+                  id='include_group_multiplier'
+                  checked={filters.billing_basis !== 'before_group'}
+                  onCheckedChange={(checked) =>
+                    handleChange(
+                      'billing_basis',
+                      checked ? 'charged' : 'before_group'
+                    )
+                  }
+                  aria-label={t('Include group multiplier')}
                 />
               </div>
             </>

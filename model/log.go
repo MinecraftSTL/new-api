@@ -66,6 +66,7 @@ type Log struct {
 	TokenName         string `json:"token_name" gorm:"index;default:''"`
 	ModelName         string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
 	Quota             int    `json:"quota" gorm:"default:0"`
+	QuotaBeforeGroup  int    `json:"quota_before_group,omitempty" gorm:"not null;default:0"`
 	PromptTokens      int    `json:"prompt_tokens" gorm:"default:0"`
 	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
 	UseTime           int    `json:"use_time" gorm:"default:0"`
@@ -116,6 +117,7 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].QuotaBeforeGroup = 0
 		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
 	}
 	assignDisplayLogIds(logs, startIdx)
@@ -328,6 +330,7 @@ type RecordConsumeLogParams struct {
 	ModelName        string    `json:"model_name"`
 	TokenName        string    `json:"token_name"`
 	Quota            int       `json:"quota"`
+	QuotaBeforeGroup int       `json:"quota_before_group"`
 	Content          string    `json:"content"`
 	TokenId          int       `json:"token_id"`
 	UseTimeSeconds   int       `json:"use_time_seconds"`
@@ -364,6 +367,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		TokenName:        params.TokenName,
 		ModelName:        params.ModelName,
 		Quota:            params.Quota,
+		QuotaBeforeGroup: params.QuotaBeforeGroup,
 		ChannelId:        params.ChannelId,
 		TokenId:          params.TokenId,
 		UseTime:          params.UseTimeSeconds,
@@ -385,31 +389,33 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled {
 		LogQuotaData(QuotaDataLogParams{
-			UserID:    userId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			TokenUsed: params.PromptTokens + params.CompletionTokens,
-			UseGroup:  params.Group,
-			TokenID:   params.TokenId,
-			ChannelID: params.ChannelId,
-			NodeName:  common.NodeName,
+			UserID:           userId,
+			Username:         username,
+			ModelName:        params.ModelName,
+			Quota:            params.Quota,
+			QuotaBeforeGroup: params.QuotaBeforeGroup,
+			CreatedAt:        createdAt,
+			TokenUsed:        params.PromptTokens + params.CompletionTokens,
+			UseGroup:         params.Group,
+			TokenID:          params.TokenId,
+			ChannelID:        params.ChannelId,
+			NodeName:         common.NodeName,
 		})
 	}
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   string
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     *LogOther
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	UserId           int
+	LogType          int
+	Content          string
+	ChannelId        int
+	ModelName        string
+	Quota            int
+	QuotaBeforeGroup int
+	TokenId          int
+	Group            string
+	Other            *LogOther
+	NodeName         string // 任务发起节点；为空时回退当前节点
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -425,18 +431,19 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 	createdAt := common.GetTimestamp()
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: createdAt,
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     params.Other.JSONString(),
+		UserId:           params.UserId,
+		Username:         username,
+		CreatedAt:        createdAt,
+		Type:             params.LogType,
+		Content:          params.Content,
+		TokenName:        tokenName,
+		ModelName:        params.ModelName,
+		Quota:            params.Quota,
+		QuotaBeforeGroup: params.QuotaBeforeGroup,
+		ChannelId:        params.ChannelId,
+		TokenId:          params.TokenId,
+		Group:            params.Group,
+		Other:            params.Other.JSONString(),
 	}
 	err := createLog(log)
 	if err != nil {
@@ -448,15 +455,16 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			nodeName = common.NodeName
 		}
 		LogQuotaData(QuotaDataLogParams{
-			UserID:    params.UserId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			UseGroup:  params.Group,
-			TokenID:   params.TokenId,
-			ChannelID: params.ChannelId,
-			NodeName:  nodeName,
+			UserID:           params.UserId,
+			Username:         username,
+			ModelName:        params.ModelName,
+			Quota:            params.Quota,
+			QuotaBeforeGroup: params.QuotaBeforeGroup,
+			CreatedAt:        createdAt,
+			UseGroup:         params.Group,
+			TokenID:          params.TokenId,
+			ChannelID:        params.ChannelId,
+			NodeName:         nodeName,
 		})
 	}
 }
@@ -606,13 +614,14 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 }
 
 type Stat struct {
-	Quota int `json:"quota"`
-	Rpm   int `json:"rpm"`
-	Tpm   int `json:"tpm"`
+	Quota            int `json:"quota"`
+	QuotaBeforeGroup int `json:"quota_before_group,omitempty"`
+	Rpm              int `json:"rpm"`
+	Tpm              int `json:"tpm"`
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
+	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota, COALESCE(sum(quota_before_group), 0) quota_before_group")
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")

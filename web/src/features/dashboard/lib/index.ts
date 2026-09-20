@@ -41,4 +41,9 @@ export {
   getFlowStages,
 } from './flow'
 export { safeDivide, calculateDashboardStats } from './stats'
+export {
+  DEFAULT_BILLING_BASIS,
+  quotaForBillingBasis,
+  resolveBillingBasis,
+} from './billing'
 export { getPreviewText } from './text'

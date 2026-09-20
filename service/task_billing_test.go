@@ -529,13 +529,14 @@ func countLogs(t *testing.T) int64 {
 // ===========================================================================
 
 func TestPrepareMidjourneyTaskBillingKeepsUnbilledMarkerClear(t *testing.T) {
-	task := &model.Midjourney{Quota: 900, TokenId: 7, BillingChannelId: 8}
+	task := &model.Midjourney{Quota: 900, QuotaBeforeGroup: 450, TokenId: 7, BillingChannelId: 8}
 
 	prepared, err := PrepareMidjourneyTaskBilling(&relaycommon.RelayInfo{}, task, 900, false)
 
 	require.NoError(t, err)
 	assert.False(t, prepared)
 	assert.Zero(t, task.Quota)
+	assert.Zero(t, task.QuotaBeforeGroup)
 	assert.Zero(t, task.TokenId)
 	assert.Zero(t, task.BillingChannelId)
 }
@@ -576,7 +577,7 @@ func TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel(t *testi
 	ctx := context.Background()
 
 	const userID, tokenID, billingChannelID, executionChannelID = 50, 50, 50, 51
-	const initialUserQuota, initialTokenQuota, chargedQuota = 10000, 5000, 3000
+	const initialUserQuota, initialTokenQuota, chargedQuota, quotaBeforeGroup = 10000, 5000, 3000, 1500
 	seedUser(t, userID, initialUserQuota)
 	seedToken(t, tokenID, userID, "sk-midjourney", initialTokenQuota)
 	seedChannel(t, billingChannelID)
@@ -593,17 +594,19 @@ func TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel(t *testi
 		},
 	}
 	task := &model.Midjourney{
-		UserId:    userID,
-		Action:    "IMAGINE",
-		MjId:      "mj-accounting-refund",
-		ChannelId: executionChannelID,
-		Progress:  "0%",
+		UserId:           userID,
+		Action:           "IMAGINE",
+		MjId:             "mj-accounting-refund",
+		ChannelId:        executionChannelID,
+		Progress:         "0%",
+		QuotaBeforeGroup: quotaBeforeGroup,
 	}
 
 	prepared, err := PrepareMidjourneyTaskBilling(relayInfo, task, chargedQuota, true)
 	require.NoError(t, err)
 	require.True(t, prepared)
 	assert.Equal(t, chargedQuota, task.Quota)
+	assert.Equal(t, quotaBeforeGroup, task.QuotaBeforeGroup)
 	assert.Zero(t, task.TokenId)
 	assert.Equal(t, billingChannelID, task.BillingChannelId)
 	require.NoError(t, task.Insert())
@@ -615,6 +618,7 @@ func TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel(t *testi
 	assert.Equal(t, initialTokenQuota-chargedQuota, getTokenRemainQuota(t, tokenID))
 	persisted := getMidjourneyTask(t, task.Id)
 	assert.Equal(t, chargedQuota, persisted.Quota)
+	assert.Equal(t, quotaBeforeGroup, persisted.QuotaBeforeGroup)
 	assert.Equal(t, tokenID, persisted.TokenId)
 	assert.Equal(t, billingChannelID, persisted.BillingChannelId)
 
@@ -632,12 +636,14 @@ func TestMidjourneyRefundRestoresEveryAccountingElementOnBillingChannel(t *testi
 
 	persisted = getMidjourneyTask(t, task.Id)
 	assert.Zero(t, persisted.Quota)
+	assert.Zero(t, persisted.QuotaBeforeGroup)
 	assert.Equal(t, tokenID, persisted.TokenId)
 	assert.Equal(t, billingChannelID, persisted.BillingChannelId)
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, chargedQuota, log.Quota)
+	assert.Equal(t, quotaBeforeGroup, log.QuotaBeforeGroup)
 	assert.Equal(t, tokenID, log.TokenId)
 	assert.Equal(t, billingChannelID, log.ChannelId)
 
@@ -663,7 +669,7 @@ func TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers(t *testing.T) {
 			ChannelId: channelID,
 		},
 	}
-	task := &model.Midjourney{UserId: userID, MjId: "mj-funding-failure", ChannelId: channelID}
+	task := &model.Midjourney{UserId: userID, MjId: "mj-funding-failure", ChannelId: channelID, QuotaBeforeGroup: 1500}
 	prepared, err := PrepareMidjourneyTaskBilling(relayInfo, task, chargedQuota, true)
 	require.NoError(t, err)
 	require.True(t, prepared)
@@ -689,6 +695,7 @@ func TestSettleMidjourneyTaskBillingFundingFailureClearsMarkers(t *testing.T) {
 	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
 	persisted := getMidjourneyTask(t, task.Id)
 	assert.Zero(t, persisted.Quota)
+	assert.Zero(t, persisted.QuotaBeforeGroup)
 	assert.Zero(t, persisted.TokenId)
 	assert.Zero(t, persisted.BillingChannelId)
 	usedQuota, requestCount := getUserUsageAccounting(t, userID)
@@ -761,7 +768,7 @@ func TestSettleMidjourneyTaskBillingTokenFailureKeepsFundingRefundable(t *testin
 }
 
 func TestPrepareMidjourneyTaskBillingRejectsSubscriptionBeforeCharge(t *testing.T) {
-	task := &model.Midjourney{Quota: 900, TokenId: 7, BillingChannelId: 8}
+	task := &model.Midjourney{Quota: 900, QuotaBeforeGroup: 450, TokenId: 7, BillingChannelId: 8}
 	relayInfo := &relaycommon.RelayInfo{BillingSource: BillingSourceSubscription, SubscriptionId: 1}
 
 	prepared, err := PrepareMidjourneyTaskBilling(relayInfo, task, 900, true)
@@ -769,6 +776,7 @@ func TestPrepareMidjourneyTaskBillingRejectsSubscriptionBeforeCharge(t *testing.
 	require.Error(t, err)
 	assert.False(t, prepared)
 	assert.Zero(t, task.Quota)
+	assert.Zero(t, task.QuotaBeforeGroup)
 	assert.Zero(t, task.TokenId)
 	assert.Zero(t, task.BillingChannelId)
 }
@@ -971,6 +979,7 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	const userID, tokenID, channelID = 10, 10, 10
 	const initQuota, preConsumed = 10000, 2000
 	const actualQuota = 3000 // under-charged by 1000
+	const preConsumedBeforeGroup, actualQuotaBeforeGroup = 1000, 1500
 	const tokenRemain = 5000
 
 	seedUser(t, userID, initQuota)
@@ -979,8 +988,9 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.QuotaBeforeGroup = preConsumedBeforeGroup
 
-	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
+	RecalculateTaskQuotaWithBase(ctx, task, actualQuota, actualQuotaBeforeGroup, "adaptor adjustment")
 
 	// User quota should decrease by the delta (1000 additional charge)
 	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
@@ -995,12 +1005,14 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 
 	// task.Quota should be updated to actualQuota
 	assert.Equal(t, actualQuota, task.Quota)
+	assert.Equal(t, actualQuotaBeforeGroup, task.QuotaBeforeGroup)
 
 	// Log type should be Consume (additional charge)
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+	assert.Equal(t, actualQuotaBeforeGroup-preConsumedBeforeGroup, log.QuotaBeforeGroup)
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {

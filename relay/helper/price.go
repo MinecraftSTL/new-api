@@ -257,10 +257,15 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 	}
 
 	var quota int
+	var quotaBeforeGroup int
 	freeModel := false
 
 	if usePrice {
 		var err error
+		quotaBeforeGroup, err = common.QuotaFromFloatStrict(modelPrice * common.QuotaPerUnit)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
 		quota, err = common.QuotaFromFloatStrict(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		if err != nil {
 			return hosttypes.PriceData{}, err
@@ -274,6 +279,10 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 	} else {
 		// 按量计费：以模型倍率的一半作为预扣额度
 		var err error
+		quotaBeforeGroup, err = common.QuotaFromFloatStrict(modelRatio / 2 * common.QuotaPerUnit)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
 		quota, err = common.QuotaFromFloatStrict(modelRatio / 2 * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		if err != nil {
 			return hosttypes.PriceData{}, err
@@ -288,12 +297,13 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (hostt
 	}
 
 	priceData := hosttypes.PriceData{
-		FreeModel:      freeModel,
-		ModelPrice:     modelPrice,
-		ModelRatio:     modelRatio,
-		UsePrice:       usePrice,
-		Quota:          quota,
-		GroupRatioInfo: groupRatioInfo,
+		FreeModel:        freeModel,
+		ModelPrice:       modelPrice,
+		ModelRatio:       modelRatio,
+		UsePrice:         usePrice,
+		Quota:            quota,
+		QuotaBeforeGroup: quotaBeforeGroup,
+		GroupRatioInfo:   groupRatioInfo,
 	}
 	return priceData, nil
 }

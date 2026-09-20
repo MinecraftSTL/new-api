@@ -36,7 +36,9 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	if task == nil {
 		return false, errors.New("Midjourney task is nil")
 	}
+	quotaBeforeGroup := task.QuotaBeforeGroup
 	task.Quota = 0
+	task.QuotaBeforeGroup = 0
 	task.TokenId = 0
 	task.BillingChannelId = 0
 	if !shouldBill {
@@ -53,6 +55,7 @@ func PrepareMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.
 	}
 
 	task.Quota = quota
+	task.QuotaBeforeGroup = quotaBeforeGroup
 	task.BillingChannelId = task.ChannelId
 	if relayInfo.ChannelMeta != nil && relayInfo.ChannelId > 0 {
 		task.BillingChannelId = relayInfo.ChannelId
@@ -75,6 +78,7 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
 	if !result.FundingApplied {
 		task.Quota = 0
+		task.QuotaBeforeGroup = 0
 		task.TokenId = 0
 		task.BillingChannelId = 0
 		if updateErr := task.UpdateBillingState(); updateErr != nil {
@@ -96,6 +100,7 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 // RefundMidjourneyQuota reverses every accounting element recorded for a billed legacy task.
 func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason string) bool {
 	quota := task.Quota
+	quotaBeforeGroup := task.QuotaBeforeGroup
 	if quota == 0 {
 		return true
 	}
@@ -121,17 +126,19 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 	other.SetPublic("task_id", task.MjId)
 	other.SetPublic("reason", reason)
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   model.LogTypeRefund,
-		Content:   "",
-		ChannelId: billingChannelId,
-		ModelName: CovertMjpActionToModelName(task.Action),
-		Quota:     quota,
-		TokenId:   task.TokenId,
-		Other:     other,
+		UserId:           task.UserId,
+		LogType:          model.LogTypeRefund,
+		Content:          "",
+		ChannelId:        billingChannelId,
+		ModelName:        CovertMjpActionToModelName(task.Action),
+		Quota:            quota,
+		QuotaBeforeGroup: quotaBeforeGroup,
+		TokenId:          task.TokenId,
+		Other:            other,
 	})
 
 	task.Quota = 0
+	task.QuotaBeforeGroup = 0
 	if err := task.UpdateBillingState(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("Midjourney 退款成功但清除 quota 失败 task %s: %s", task.MjId, err.Error()))
 	}

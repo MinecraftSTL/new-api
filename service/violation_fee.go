@@ -82,20 +82,25 @@ func shouldChargeViolationFee(err *types.NewAPIError) bool {
 }
 
 func calcViolationFeeQuota(amount, groupRatio float64) int {
+	quota, _ := calcViolationFeeQuotaChecked(amount, groupRatio)
+	return quota
+}
+
+func calcViolationFeeQuotaChecked(amount, groupRatio float64) (int, *common.QuotaClamp) {
 	if amount <= 0 {
-		return 0
+		return 0, nil
 	}
 	if groupRatio <= 0 {
-		return 0
+		return 0, nil
 	}
-	quota := common.QuotaFromDecimal(decimal.NewFromFloat(amount).
+	quota, clamp := common.QuotaFromDecimalChecked(decimal.NewFromFloat(amount).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
 		Mul(decimal.NewFromFloat(groupRatio)).
 		Round(0))
 	if quota <= 0 {
-		return 0
+		return 0, clamp
 	}
-	return quota
+	return quota, clamp
 }
 
 // ChargeViolationFeeIfNeeded charges an additional fee after the normal flow finishes (including refund).
@@ -117,10 +122,13 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	}
 
 	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
-	feeQuota := calcViolationFeeQuota(settings.ViolationDeductionAmount, groupRatio)
+	feeQuota, clamp := calcViolationFeeQuotaChecked(settings.ViolationDeductionAmount, groupRatio)
+	noteQuotaClamp(relayInfo, clamp)
 	if feeQuota <= 0 {
 		return false
 	}
+	feeQuotaBeforeGroup, beforeGroupClamp := calcViolationFeeQuotaChecked(settings.ViolationDeductionAmount, 1)
+	noteQuotaClamp(relayInfo, beforeGroupClamp)
 
 	if err := PostConsumeQuota(relayInfo, feeQuota, 0, true); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("failed to charge violation fee: %s", err.Error()))
@@ -146,18 +154,20 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		"upstream_error_code":  fmt.Sprintf("%v", oai.Code),
 		"violation_fee_marker": CSAMViolationMarker,
 	})
+	attachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
-		ChannelId:      relayInfo.ChannelId,
-		ModelName:      relayInfo.OriginModelName,
-		TokenName:      tokenName,
-		Quota:          feeQuota,
-		Content:        "Violation fee charged",
-		TokenId:        relayInfo.TokenId,
-		UseTimeSeconds: int(useTimeSeconds),
-		IsStream:       relayInfo.IsStream,
-		Group:          relayInfo.UsingGroup,
-		Other:          other,
+		ChannelId:        relayInfo.ChannelId,
+		ModelName:        relayInfo.OriginModelName,
+		TokenName:        tokenName,
+		Quota:            feeQuota,
+		QuotaBeforeGroup: feeQuotaBeforeGroup,
+		Content:          "Violation fee charged",
+		TokenId:          relayInfo.TokenId,
+		UseTimeSeconds:   int(useTimeSeconds),
+		IsStream:         relayInfo.IsStream,
+		Group:            relayInfo.UsingGroup,
+		Other:            other,
 	})
 
 	return true

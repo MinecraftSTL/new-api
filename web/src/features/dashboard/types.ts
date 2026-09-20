@@ -31,6 +31,7 @@ export interface QuotaDataItem {
   token_used?: number
   count?: number
   quota?: number
+  quota_before_group?: number
 }
 
 export interface FlowQuotaDataItem {
@@ -46,7 +47,11 @@ export interface FlowQuotaDataItem {
   token_used?: number
   count?: number
   quota?: number
+  quota_before_group?: number
 }
+
+/** Which persisted quota column powers an administrator's dashboard. */
+export type BillingBasis = 'charged' | 'before_group'
 
 export type FlowMetric = 'quota' | 'tokens' | 'requests'
 
@@ -90,6 +95,7 @@ export interface FlowBuildOptions {
   // Lets the caller inject a localized string such as "Deleted (123)".
   deletedTokenLabel?: (tokenId: number) => string
   otherNodeLabel?: (kind: FlowNodeKind) => string
+  billingBasis?: BillingBasis
 }
 
 export interface DashboardFlowNode {
@@ -189,6 +195,7 @@ export interface DashboardFilters {
   end_timestamp?: Date
   time_granularity?: TimeGranularity
   username?: string
+  billing_basis?: BillingBasis
 }
 
 export type ConsumptionDistributionChartType = 'bar' | 'area'
@@ -200,6 +207,7 @@ export interface DashboardChartPreferences {
   modelAnalyticsChart: ModelAnalyticsChartTab
   defaultTimeRangeDays: number
   defaultTimeGranularity: TimeGranularity
+  billingBasis: BillingBasis
 }
 
 // User analytics selections are held by the dashboard parent so they survive
@@ -208,6 +216,7 @@ export interface UserChartsFilters {
   timeGranularity: TimeGranularity
   selectedRange: number
   topUserLimit: number
+  billingBasis: BillingBasis
 }
 
 // ============================================================================

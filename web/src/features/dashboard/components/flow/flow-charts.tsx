@@ -326,8 +326,12 @@ export function FlowCharts(props: FlowChartsProps) {
     ]
   )
   const flowQueryParams = useMemo(
-    () => buildQueryParams(timeRange, props.filters),
-    [props.filters, timeRange]
+    () =>
+      buildQueryParams(timeRange, {
+        time_granularity: props.filters?.time_granularity,
+        username: props.filters?.username,
+      }),
+    [props.filters?.time_granularity, props.filters?.username, timeRange]
   )
 
   const {
@@ -359,6 +363,7 @@ export function FlowCharts(props: FlowChartsProps) {
         maskSensitive,
         deletedTokenLabel: (tokenId) => t('Deleted ({{id}})', { id: tokenId }),
         otherNodeLabel: (kind) => t(FLOW_OTHER_NODE_LABEL_KEYS[kind]),
+        billingBasis: props.filters?.billing_basis,
       }),
     [
       flowRole,
@@ -373,6 +378,7 @@ export function FlowCharts(props: FlowChartsProps) {
       topNodeLimit,
       visibleStages,
       maskSensitive,
+      props.filters?.billing_basis,
       t,
     ]
   )

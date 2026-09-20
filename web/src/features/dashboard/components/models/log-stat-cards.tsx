@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -63,17 +63,22 @@ export function LogStatCards(props: LogStatCardsProps) {
   const statCardsConfig = useModelStatCardsConfig()
   const user = useAuthStore((state) => state.auth.user)
   const isAdmin = !!(user?.role && user.role >= 10)
-  const [stats, setStats] = useState<{
-    totalQuota: number
-    totalCount: number
-    totalTokens: number
-  } | null>(null)
+  const [data, setData] = useState<QuotaDataItem[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
   const [timeRangeMinutes, setTimeRangeMinutes] = useState(0)
 
   const { filters, onDataUpdate } = props
+  const billingBasis = filters?.billing_basis ?? 'charged'
+  const startTimestamp = filters?.start_timestamp
+  const endTimestamp = filters?.end_timestamp
+  const timeGranularity = filters?.time_granularity
+  const username = filters?.username
+  const stats = useMemo(
+    () => (data === null ? null : calculateDashboardStats(data, billingBasis)),
+    [billingBasis, data]
+  )
 
   useEffect(() => {
     const abortController = new AbortController()
@@ -84,23 +89,29 @@ export function LogStatCards(props: LogStatCardsProps) {
     onDataUpdate?.([], true)
 
     const timeRange = computeTimeRange(
-      getDefaultDays(filters?.time_granularity),
-      filters?.start_timestamp,
-      filters?.end_timestamp
+      getDefaultDays(timeGranularity),
+      startTimestamp,
+      endTimestamp
     )
     const timeDiff = (timeRange.end_timestamp - timeRange.start_timestamp) / 60
     setTimeRangeMinutes(timeDiff)
 
-    void getUserQuotaDates(buildQueryParams(timeRange, filters), isAdmin)
+    void getUserQuotaDates(
+      buildQueryParams(timeRange, {
+        time_granularity: timeGranularity,
+        username,
+      }),
+      isAdmin
+    )
       .then((res) => {
         if (abortController.signal.aborted) return
         const data = res?.data || []
-        setStats(calculateDashboardStats(data))
+        setData(data)
         onDataUpdate?.(data, false)
       })
       .catch(() => {
         if (abortController.signal.aborted) return
-        setStats(null)
+        setData(null)
         setError(true)
         onDataUpdate?.([], false)
       })
@@ -113,7 +124,14 @@ export function LogStatCards(props: LogStatCardsProps) {
     return () => {
       abortController.abort()
     }
-  }, [filters, isAdmin, onDataUpdate])
+  }, [
+    endTimestamp,
+    isAdmin,
+    onDataUpdate,
+    startTimestamp,
+    timeGranularity,
+    username,
+  ])
 
   const adaptedStats = {
     rpm: stats?.totalCount ?? 0,

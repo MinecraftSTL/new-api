@@ -25,30 +25,32 @@ func setupFlowControllerTestDB(t *testing.T) {
 	require.NoError(t, model.DB.Create(&model.Token{Id: 11, UserId: 1, Key: "sk-primary", Name: "primary"}).Error)
 	require.NoError(t, model.DB.Create(&model.Token{Id: 22, UserId: 2, Key: "sk-backup", Name: "backup"}).Error)
 	require.NoError(t, model.DB.Create(&model.QuotaData{
-		UserID:    1,
-		Username:  "alice",
-		NodeName:  "node-a",
-		TokenID:   11,
-		UseGroup:  "default",
-		ChannelID: 1,
-		ModelName: "gpt-a",
-		CreatedAt: 1100,
-		Count:     2,
-		Quota:     100,
-		TokenUsed: 40,
+		UserID:           1,
+		Username:         "alice",
+		NodeName:         "node-a",
+		TokenID:          11,
+		UseGroup:         "default",
+		ChannelID:        1,
+		ModelName:        "gpt-a",
+		CreatedAt:        1100,
+		Count:            2,
+		Quota:            100,
+		QuotaBeforeGroup: 50,
+		TokenUsed:        40,
 	}).Error)
 	require.NoError(t, model.DB.Create(&model.QuotaData{
-		UserID:    2,
-		Username:  "bob",
-		NodeName:  "node-b",
-		TokenID:   22,
-		UseGroup:  "vip",
-		ChannelID: 1,
-		ModelName: "gpt-b",
-		CreatedAt: 1200,
-		Count:     1,
-		Quota:     70,
-		TokenUsed: 30,
+		UserID:           2,
+		Username:         "bob",
+		NodeName:         "node-b",
+		TokenID:          22,
+		UseGroup:         "vip",
+		ChannelID:        1,
+		ModelName:        "gpt-b",
+		CreatedAt:        1200,
+		Count:            1,
+		Quota:            70,
+		QuotaBeforeGroup: 35,
+		TokenUsed:        30,
 	}).Error)
 }
 
@@ -72,6 +74,7 @@ func TestGetAllFlowQuotaDatesUsesAdminDimensions(t *testing.T) {
 	GetAllFlowQuotaDates(ctx)
 
 	payload := decodeFlowQuotaResponse(t, recorder)
+	require.Contains(t, recorder.Body.String(), "quota_before_group")
 	require.Len(t, payload.Data, 1)
 	require.Equal(t, "bob", payload.Data[0].Username)
 	require.Equal(t, "vip", payload.Data[0].UseGroup)
@@ -91,6 +94,7 @@ func TestGetAllFlowQuotaDatesUsesRootDimensions(t *testing.T) {
 	GetAllFlowQuotaDates(ctx)
 
 	payload := decodeFlowQuotaResponse(t, recorder)
+	require.Contains(t, recorder.Body.String(), "quota_before_group")
 	require.Len(t, payload.Data, 1)
 	require.Equal(t, "alice", payload.Data[0].Username)
 	require.Equal(t, "node-a", payload.Data[0].NodeName)
@@ -110,11 +114,39 @@ func TestGetUserFlowQuotaDatesRestrictsToAuthenticatedUser(t *testing.T) {
 	GetUserFlowQuotaDates(ctx)
 
 	payload := decodeFlowQuotaResponse(t, recorder)
+	require.NotContains(t, recorder.Body.String(), "quota_before_group")
 	require.Len(t, payload.Data, 1)
 	require.Empty(t, payload.Data[0].Username)
 	require.Equal(t, "primary", payload.Data[0].TokenName)
 	require.Equal(t, "default", payload.Data[0].UseGroup)
 	require.Empty(t, payload.Data[0].ChannelName)
+}
+
+func TestGetUserQuotaDatesOmitsQuotaBeforeGroup(t *testing.T) {
+	setupFlowControllerTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/self?start_timestamp=1000&end_timestamp=2000", nil)
+
+	GetUserQuotaDates(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "quota_before_group")
+}
+
+func TestGetAllQuotaDatesIncludesQuotaBeforeGroup(t *testing.T) {
+	setupFlowControllerTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data?start_timestamp=1000&end_timestamp=2000", nil)
+
+	GetAllQuotaDates(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"quota_before_group":50`)
 }
 
 func TestGetUserFlowQuotaDatesRejectsInvalidTimeRange(t *testing.T) {

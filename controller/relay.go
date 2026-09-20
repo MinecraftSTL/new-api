@@ -738,6 +738,7 @@ func executeTaskSubmissionWith(
 		TieredSnapshot:  relayInfo.TieredBillingSnapshot,
 	}
 	task.Quota = result.Quota
+	task.QuotaBeforeGroup = result.QuotaBeforeGroup
 	task.Data = result.TaskData
 	if len(result.PluginState) > 0 {
 		task.PrivateData.PluginState = result.PluginState

@@ -29,6 +29,9 @@ export const DEFAULT_DASHBOARD_CHART_PREFERENCES: DashboardChartPreferences = {
   modelAnalyticsChart: 'trend',
   defaultTimeRangeDays: 1,
   defaultTimeGranularity: DEFAULT_TIME_GRANULARITY,
+  // Administrators analyse cost with the pre-multiplier basis by default.
+  // Non-admins never receive quota_before_group, so read paths force 'charged'.
+  billingBasis: 'before_group',
 }
 
 export const TIME_RANGE_BY_GRANULARITY = {
@@ -66,4 +69,5 @@ export const EMPTY_DASHBOARD_FILTERS: DashboardFilters = {
   end_timestamp: undefined,
   time_granularity: 'hour',
   username: '',
+  billing_basis: 'charged',
 }

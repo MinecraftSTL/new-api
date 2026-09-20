@@ -235,6 +235,24 @@ func TryTieredSettle(relayInfo *relaycommon.RelayInfo, params billingexpr.TokenP
 	return true, tr.ActualQuotaAfterGroup, &tr
 }
 
+// TieredQuotaBeforeGroup returns the rounded settlement quota before the
+// request's group multiplier. When settlement falls back to pre-consume, the
+// captured estimate is the only stable base-cost value available.
+func TieredQuotaBeforeGroup(relayInfo *relaycommon.RelayInfo, result *billingexpr.TieredResult) int {
+	if relayInfo == nil {
+		return 0
+	}
+	quotaBeforeGroup := float64(0)
+	if result != nil {
+		quotaBeforeGroup = result.ActualQuotaBeforeGroup
+	} else if snap := relayInfo.TieredBillingSnapshot; snap != nil {
+		quotaBeforeGroup = snap.EstimatedQuotaBeforeGroup
+	}
+	quota, clamp := common.QuotaRoundChecked(quotaBeforeGroup)
+	noteQuotaClamp(relayInfo, clamp)
+	return quota
+}
+
 // A failed evaluation retains the reservation and its estimated billing unit.
 // Successful evaluations always use the actual branch, including zero prices.
 func isFixedPriceSettlement(info *relaycommon.RelayInfo, result *billingexpr.TieredResult) bool {
@@ -243,4 +261,5 @@ func isFixedPriceSettlement(info *relaycommon.RelayInfo, result *billingexpr.Tie
 	}
 	snap := info.TieredBillingSnapshot
 	return snap != nil && snap.BillingMode == "tiered_expr" && snap.EstimatedBillingUnit == billingexpr.BillingUnitRequest
+
 }

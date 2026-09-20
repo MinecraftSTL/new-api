@@ -28,13 +28,14 @@ import (
 )
 
 type TaskSubmitResult struct {
-	UpstreamTaskID string
-	TaskData       []byte
-	ClientResponse any
-	Platform       constant.TaskPlatform
-	Quota          int
-	Immediate      *relaycommon.TaskInfo
-	PluginState    []byte
+	UpstreamTaskID   string
+	TaskData         []byte
+	ClientResponse   any
+	Platform         constant.TaskPlatform
+	Quota            int
+	QuotaBeforeGroup int
+	Immediate        *relaycommon.TaskInfo
+	PluginState      []byte
 	//PerCallPrice   types.PriceData
 }
 
@@ -290,9 +291,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorWrapper(runErr, "model_price_error", http.StatusBadRequest)
 		}
 		groupRatioInfo := helper.HandleGroupRatio(c, info)
+		quotaBeforeGroup, beforeGroupClamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit)
+		noteTaskQuotaClamp(info, beforeGroupClamp)
 		quota, clamp := common.QuotaRoundChecked(cost * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		noteTaskQuotaClamp(info, clamp)
-		priceData = types.PriceData{Quota: quota, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
+		priceData = types.PriceData{Quota: quota, QuotaBeforeGroup: quotaBeforeGroup, QuotaToPreConsume: quota, GroupRatioInfo: groupRatioInfo}
 		info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{BillingMode: billing_setting.BillingModeTieredExpr, ModelName: modelName, ExprString: exprStr, ExprHash: billingexpr.ExprHashString(exprStr), GroupRatio: groupRatioInfo.GroupRatio, EstimatedQuotaBeforeGroup: cost * common.QuotaPerUnit, EstimatedQuotaAfterGroup: quota, EstimatedTier: trace.MatchedTier, QuotaPerUnit: common.QuotaPerUnit, ExprVersion: billingexpr.ExprVersion(exprStr), TaskUsageBilling: true, UsageFacts: facts}
 	} else {
 		priceData, err = helper.ModelPriceHelperPerCall(c, info)
@@ -328,6 +331,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		quota, clamp := common.QuotaFromFloatChecked(quotaWithRatios)
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
+
+		quotaBeforeGroupWithRatios := info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.QuotaBeforeGroup))
+		quotaBeforeGroup, beforeGroupClamp := common.QuotaFromFloatChecked(quotaBeforeGroupWithRatios)
+		info.PriceData.QuotaBeforeGroup = quotaBeforeGroup
+		noteTaskQuotaClamp(info, beforeGroupClamp)
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
@@ -370,8 +378,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
+	finalQuotaBeforeGroup := info.PriceData.QuotaBeforeGroup
 	if parsed.Immediate != nil && parsed.Immediate.Status == model.TaskStatusFailure {
 		finalQuota = 0
+		finalQuotaBeforeGroup = 0
 	} else if snap := info.TieredBillingSnapshot; snap != nil {
 		if parsed.Immediate != nil && parsed.Immediate.Status == model.TaskStatusSuccess && len(parsed.Immediate.UsageFacts) > 0 {
 			settlement, facts, err := service.EvaluateTaskCompletionUsage(snap, parsed.Immediate.UsageFacts)
@@ -379,6 +389,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 				logger.LogWarn(c, fmt.Sprintf("task immediate usage settlement failed; retaining reserved quota: %v", err))
 			} else {
 				finalQuota = settlement.ActualQuotaAfterGroup
+				finalQuotaBeforeGroup = common.QuotaRound(settlement.ActualQuotaBeforeGroup)
 				snap.UsageFacts = facts
 				snap.EstimatedTier = settlement.MatchedTier
 				noteTaskQuotaClamp(info, settlement.Clamp)
@@ -386,42 +397,55 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	} else {
 		if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, parsed.TaskData); len(adjustedRatios) > 0 {
-			if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
+			if adjustedQuota, adjustedQuotaBeforeGroup, ok := recalcQuotaFromRatiosWithBase(info, adjustedRatios); ok {
 				// 基于调整后的 ratios 重新计算 quota
 				finalQuota = adjustedQuota
+				finalQuotaBeforeGroup = adjustedQuotaBeforeGroup
 				info.PriceData.ReplaceOtherRatios(adjustedRatios)
 				info.PriceData.Quota = finalQuota
+				info.PriceData.QuotaBeforeGroup = finalQuotaBeforeGroup
 			}
 		}
 	}
 
 	info.PriceData.Quota = finalQuota
+	info.PriceData.QuotaBeforeGroup = finalQuotaBeforeGroup
 
 	return &TaskSubmitResult{
-		UpstreamTaskID: parsed.UpstreamTaskID,
-		TaskData:       parsed.TaskData,
-		ClientResponse: parsed.ClientResponse,
-		Platform:       platform,
-		Quota:          finalQuota,
-		Immediate:      parsed.Immediate,
-		PluginState:    parsed.PluginState,
+		UpstreamTaskID:   parsed.UpstreamTaskID,
+		TaskData:         parsed.TaskData,
+		ClientResponse:   parsed.ClientResponse,
+		Platform:         platform,
+		Quota:            finalQuota,
+		QuotaBeforeGroup: finalQuotaBeforeGroup,
+		Immediate:        parsed.Immediate,
+		PluginState:      parsed.PluginState,
 	}, nil
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
 // 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) (int, bool) {
+	quota, _, ok := recalcQuotaFromRatiosWithBase(info, ratios)
+	return quota, ok
+}
+
+func recalcQuotaFromRatiosWithBase(info *relaycommon.RelayInfo, ratios map[string]float64) (int, int, bool) {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
 	baseQuota := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.Quota))
+	baseQuotaBeforeGroup := info.PriceData.RemoveOtherRatiosFromFloat(float64(info.PriceData.QuotaBeforeGroup))
 	priceData := info.PriceData
 	if !priceData.ReplaceOtherRatios(ratios) {
-		return 0, false
+		return 0, 0, false
 	}
 	// 应用新的 ratios
 	result := priceData.ApplyOtherRatiosToFloat(baseQuota)
 	quota, clamp := common.QuotaFromFloatChecked(result)
 	noteTaskQuotaClamp(info, clamp)
-	return quota, true
+	resultBeforeGroup := priceData.ApplyOtherRatiosToFloat(baseQuotaBeforeGroup)
+	quotaBeforeGroup, beforeGroupClamp := common.QuotaFromFloatChecked(resultBeforeGroup)
+	noteTaskQuotaClamp(info, beforeGroupClamp)
+	return quota, quotaBeforeGroup, true
 }
 
 // noteTaskQuotaClamp records the first quota saturation event onto the task's
