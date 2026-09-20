@@ -320,3 +320,35 @@ func TestSelectSatisfiedChannelReactsToCandidateLoss(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectSatisfiedChannelReactsToCandidateGrowth(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 801, "default", "dynamic-growth-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 802, "default", "dynamic-growth-model", 50, 100, true)
+			InitChannelCache()
+
+			attempted := map[int]struct{}{801: {}}
+			options := ChannelSelectionOptions{
+				Groups:              []string{"default"},
+				ModelName:           "dynamic-growth-model",
+				AttemptedChannelIDs: attempted,
+				RemainingAttempts:   2,
+				CurrentGroup:        "default",
+				LastChannelID:       801,
+			}
+			repeated, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, repeated)
+			assert.Equal(t, 801, repeated.Id)
+
+			createChannelSelectionTestChannel(t, 803, "default", "dynamic-growth-model", 200, 100, true)
+			InitChannelCache()
+			channel, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 803, channel.Id)
+		})
+	}
+}
