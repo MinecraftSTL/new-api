@@ -16,9 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { beforeEach, describe, expect, test } from 'vitest'
 
-import { quotaForBillingBasis } from '../billing'
+import {
+  DASHBOARD_CHART_PREFERENCES_STORAGE_KEY,
+  DEFAULT_DASHBOARD_CHART_PREFERENCES,
+} from '../../constants'
+import { quotaForBillingBasis, resolveBillingBasis } from '../billing'
+import {
+  buildDefaultDashboardFilters,
+  getSavedChartPreferences,
+} from '../filters'
 import { buildDashboardFlowData } from '../flow'
 import { calculateDashboardStats } from '../stats'
 
@@ -85,5 +93,52 @@ describe('dashboard billing basis', () => {
         (option) => option.value === 'channel:9'
       )?.valueRaw
     ).toBe(100)
+  })
+})
+
+describe('dashboard billing basis preference', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  test('defaults to the pre-multiplier basis', () => {
+    expect(DEFAULT_DASHBOARD_CHART_PREFERENCES.billingBasis).toBe(
+      'before_group'
+    )
+  })
+
+  test('falls back to the default when the stored value is absent or invalid', () => {
+    localStorage.setItem(
+      DASHBOARD_CHART_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ defaultTimeRangeDays: 7 })
+    )
+    expect(getSavedChartPreferences().billingBasis).toBe('before_group')
+
+    localStorage.setItem(
+      DASHBOARD_CHART_PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ billingBasis: 'legacy' })
+    )
+    expect(getSavedChartPreferences().billingBasis).toBe('before_group')
+  })
+
+  test('keeps the stored basis for admins and forces charged quota for regular users', () => {
+    const preferences = {
+      ...DEFAULT_DASHBOARD_CHART_PREFERENCES,
+      billingBasis: 'before_group' as const,
+    }
+
+    expect(buildDefaultDashboardFilters(preferences, true).billing_basis).toBe(
+      'before_group'
+    )
+    expect(buildDefaultDashboardFilters(preferences, false).billing_basis).toBe(
+      'charged'
+    )
+  })
+
+  test('resolveBillingBasis never exposes the pre-multiplier basis to regular users', () => {
+    expect(resolveBillingBasis('before_group', true)).toBe('before_group')
+    expect(resolveBillingBasis('before_group', false)).toBe('charged')
+    expect(resolveBillingBasis('charged', false)).toBe('charged')
+    expect(resolveBillingBasis(undefined, true)).toBe('charged')
   })
 })
