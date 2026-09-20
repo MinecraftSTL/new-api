@@ -164,6 +164,30 @@ func GetChannel(
 	return &channel, err
 }
 
+func loadDatabaseChannelSelectionCandidates(groups []string, modelName string, filters []dto.ChannelFilter) ([]channelSelectionCandidate, error) {
+	candidates := make([]channelSelectionCandidate, 0)
+	for _, group := range groups {
+		abilities, err := loadEnabledAbilities(group, modelName)
+		if err != nil {
+			return nil, err
+		}
+		abilities = filterAbilitiesByConstraints(abilities, modelName, filters)
+		for _, ability := range abilities {
+			priority := int64(0)
+			if ability.Priority != nil {
+				priority = *ability.Priority
+			}
+			candidates = append(candidates, channelSelectionCandidate{
+				channelID: ability.ChannelId,
+				group:     group,
+				priority:  priority,
+				weight:    int(ability.Weight),
+			})
+		}
+	}
+	return candidates, nil
+}
+
 // GetChannelByAttempts selects the highest-priority channel that has not been
 // attempted yet. It is used by the request retry path, which tracks attempts
 // across groups instead of mapping one retry directly to one priority.

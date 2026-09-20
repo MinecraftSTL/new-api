@@ -163,3 +163,149 @@ func TestGetRandomSatisfiedChannelUsesCurrentWeightsAndEnabledState(t *testing.T
 		})
 	}
 }
+
+func TestSelectSatisfiedChannelPreservesHighPriorityRetries(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 401, "default", "retry-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 402, "default", "retry-model", 50, 100, true)
+			createChannelSelectionTestChannel(t, 403, "default", "retry-model", 25, 100, true)
+			InitChannelCache()
+
+			attempted := make(map[int]struct{})
+			options := ChannelSelectionOptions{
+				Groups:              []string{"default"},
+				ModelName:           "retry-model",
+				AttemptedChannelIDs: attempted,
+				RemainingAttempts:   4,
+				CurrentGroup:        "default",
+			}
+
+			first, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, first)
+			assert.Equal(t, 401, first.Id)
+			attempted[first.Id] = struct{}{}
+
+			options.LastChannelID = first.Id
+			options.RemainingAttempts = 3
+			repeated, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, repeated)
+			assert.Equal(t, 401, repeated.Id)
+
+			options.RemainingAttempts = 2
+			second, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, second)
+			assert.Equal(t, 402, second.Id)
+			attempted[second.Id] = struct{}{}
+
+			options.LastChannelID = second.Id
+			options.RemainingAttempts = 1
+			third, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, third)
+			assert.Equal(t, 403, third.Id)
+		})
+	}
+}
+
+func TestSelectSatisfiedChannelUsesDistinctWhenEnoughChannels(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 501, "default", "distinct-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 502, "default", "distinct-model", 50, 100, true)
+			createChannelSelectionTestChannel(t, 503, "default", "distinct-model", 25, 100, true)
+			InitChannelCache()
+
+			attempted := make(map[int]struct{})
+			options := ChannelSelectionOptions{
+				Groups:              []string{"default"},
+				ModelName:           "distinct-model",
+				AttemptedChannelIDs: attempted,
+				RemainingAttempts:   3,
+				CurrentGroup:        "default",
+			}
+			for _, expected := range []int{501, 502, 503} {
+				channel, _, err := SelectSatisfiedChannel(options)
+				require.NoError(t, err)
+				require.NotNil(t, channel)
+				assert.Equal(t, expected, channel.Id)
+				attempted[channel.Id] = struct{}{}
+				options.LastChannelID = channel.Id
+				options.RemainingAttempts--
+			}
+		})
+	}
+}
+
+func TestSelectSatisfiedChannelRepeatsLastCurrentPriority(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 601, "default", "repeat-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 602, "default", "repeat-model", 50, 100, true)
+			InitChannelCache()
+
+			attempted := map[int]struct{}{601: {}, 602: {}}
+			options := ChannelSelectionOptions{
+				Groups:              []string{"default"},
+				ModelName:           "repeat-model",
+				AttemptedChannelIDs: attempted,
+				RemainingAttempts:   2,
+				CurrentGroup:        "default",
+				LastChannelID:       602,
+			}
+			channel, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 602, channel.Id)
+
+			options.LastChannelID = 601
+			channel, _, err = SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 601, channel.Id)
+		})
+	}
+}
+
+func TestSelectSatisfiedChannelReactsToCandidateLoss(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 701, "default", "dynamic-retry-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 702, "default", "dynamic-retry-model", 50, 100, true)
+			createChannelSelectionTestChannel(t, 703, "default", "dynamic-retry-model", 25, 100, true)
+			InitChannelCache()
+
+			attempted := make(map[int]struct{})
+			options := ChannelSelectionOptions{
+				Groups:              []string{"default"},
+				ModelName:           "dynamic-retry-model",
+				AttemptedChannelIDs: attempted,
+				RemainingAttempts:   4,
+				CurrentGroup:        "default",
+			}
+			first, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, first)
+			assert.Equal(t, 701, first.Id)
+			attempted[first.Id] = struct{}{}
+
+			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 702).Update("status", common.ChannelStatusManuallyDisabled).Error)
+			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 702).Update("enabled", false).Error)
+			InitChannelCache()
+
+			options.LastChannelID = first.Id
+			options.RemainingAttempts = 3
+			channel, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 701, channel.Id)
+		})
+	}
+}

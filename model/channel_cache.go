@@ -261,6 +261,33 @@ func GetRandomSatisfiedChannelByAttempts(
 	return channelsIDM[selectedID], nil
 }
 
+func loadCachedChannelSelectionCandidates(groups []string, modelName string, filters []dto.ChannelFilter) ([]channelSelectionCandidate, error) {
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	candidates := make([]channelSelectionCandidate, 0)
+	for _, group := range groups {
+		channels, _ := filterCandidateIDs(group2model2channels[group][modelName], modelName, filters)
+		if len(channels) <= 0 {
+			normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
+			channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], modelName, filters)
+		}
+		for _, channelID := range channels {
+			channel, ok := channelsIDM[channelID]
+			if !ok {
+				return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+			}
+			candidates = append(candidates, channelSelectionCandidate{
+				channelID: channelID,
+				group:     group,
+				priority:  channel.GetPriority(),
+				weight:    channel.GetWeight(),
+			})
+		}
+	}
+	return candidates, nil
+}
+
 func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)
