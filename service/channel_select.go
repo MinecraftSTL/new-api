@@ -29,10 +29,12 @@ func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
 	if c == nil {
 		return
 	}
+	channelTypes, pluginKeys := pinnedTaskPluginIdentities(c, pluginKey)
 	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{
 		Kind:                   dto.FilterTaskPluginIdentity,
 		TaskPluginKey:          pluginKey,
-		TaskPluginChannelTypes: pinnedTaskPluginChannelTypes(c, pluginKey),
+		TaskPluginChannelTypes: channelTypes,
+		TaskPluginKeys:         pluginKeys,
 	})
 }
 
@@ -205,123 +207,65 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		return nil, "", errors.New("channel selection context is nil")
 	}
 
+	groups := []string{param.TokenGroup}
+	currentGroup := param.TokenGroup
+	if param.TokenGroup == "auto" {
+		userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		if len(autoGroups) <= 0 {
+			return nil, param.TokenGroup, errors.New("auto groups is not enabled")
+		}
+		currentGroup = common.GetContextKeyString(param.Ctx, constant.ContextKeyAutoGroup)
+		if !common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry) && currentGroup != "" {
+			groups = []string{currentGroup}
+		} else {
+			groups = autoGroups
+		}
+	}
+
 	attemptedChannelIDs := make(map[int]struct{})
+	lastChannelID := 0
 	for _, channelIDText := range param.Ctx.GetStringSlice("use_channel") {
 		channelID, err := strconv.Atoi(channelIDText)
-		if err == nil && channelID > 0 {
-			attemptedChannelIDs[channelID] = struct{}{}
-		}
-	}
-
-	filters := append([]dto.ChannelFilter(nil), GetChannelConstraints(param.Ctx).Filters...)
-	if param.RequestPath != "" {
-		hasRequestPathFilter := false
-		for _, filter := range filters {
-			if filter.Kind == dto.FilterRequestPath {
-				hasRequestPathFilter = true
-				break
-			}
-		}
-		if !hasRequestPathFilter {
-			filters = append(filters, dto.ChannelFilter{
-				Kind:        dto.FilterRequestPath,
-				RequestPath: param.RequestPath,
-			})
-		}
-	}
-
-	if param.TokenGroup != "auto" {
-		channel, err := model.GetRandomSatisfiedChannelByAttempts(
-			param.TokenGroup,
-			param.ModelName,
-			attemptedChannelIDs,
-			filters,
-			true,
-		)
-		return channel, param.TokenGroup, err
-	}
-
-	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
-	autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
-	if len(autoGroups) == 0 {
-		return nil, param.TokenGroup, errors.New("auto groups is not enabled")
-	}
-
-	crossGroupRetry := common.GetContextKeyBool(param.Ctx, constant.ContextKeyTokenCrossGroupRetry)
-	currentGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyAutoGroup)
-	if !crossGroupRetry && currentGroup != "" {
-		channel, err := model.GetRandomSatisfiedChannelByAttempts(
-			currentGroup,
-			param.ModelName,
-			attemptedChannelIDs,
-			filters,
-			true,
-		)
-		if err != nil {
-			return nil, currentGroup, err
-		}
-		if channel != nil {
-			logger.LogDebug(param.Ctx, "Auto selected current group without cross-group retry: %s", currentGroup)
-		}
-		return channel, currentGroup, nil
-	}
-
-	// Scan every group for an unattempted channel before allowing a repeat.
-	for i, autoGroup := range autoGroups {
-		channel, err := model.GetRandomSatisfiedChannelByAttempts(
-			autoGroup,
-			param.ModelName,
-			attemptedChannelIDs,
-			filters,
-			false,
-		)
-		if err != nil {
-			return nil, autoGroup, err
-		}
-		if channel == nil {
+		if err != nil || channelID <= 0 {
 			continue
 		}
-		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, autoGroup)
-		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i)
-		logger.LogDebug(param.Ctx, "Auto selected group with an untried channel: %s", autoGroup)
-		return channel, autoGroup, nil
+		attemptedChannelIDs[channelID] = struct{}{}
+		lastChannelID = channelID
 	}
 
-	// All candidates were attempted; repeat only in the lowest priority layer
-	// of the last usable group.
-	for i := len(autoGroups) - 1; i >= 0; i-- {
-		autoGroup := autoGroups[i]
-		channel, err := model.GetRandomSatisfiedChannelByAttempts(
-			autoGroup,
-			param.ModelName,
-			attemptedChannelIDs,
-			filters,
-			true,
-		)
-		if err != nil {
-			return nil, autoGroup, err
-		}
-		if channel == nil {
-			continue
-		}
-		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, autoGroup)
-		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i)
-		logger.LogDebug(param.Ctx, "Auto groups exhausted; repeating the lowest priority in group: %s", autoGroup)
-		return channel, autoGroup, nil
+	remainingAttempts := common.RetryTimes - param.GetRetry() + 1
+	channel, selectedGroup, err := model.SelectSatisfiedChannel(model.ChannelSelectionOptions{
+		Groups:              groups,
+		ModelName:           param.ModelName,
+		AttemptedChannelIDs: attemptedChannelIDs,
+		Filters:             GetChannelConstraints(param.Ctx).Filters,
+		RemainingAttempts:   remainingAttempts,
+		CurrentGroup:        currentGroup,
+		LastChannelID:       lastChannelID,
+	})
+	if err != nil {
+		return nil, selectedGroup, err
 	}
-
-	return nil, param.TokenGroup, nil
+	if channel == nil {
+		return nil, selectedGroup, nil
+	}
+	if param.TokenGroup == "auto" {
+		common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, selectedGroup)
+	}
+	return channel, selectedGroup, nil
 }
 
-func pinnedTaskPluginChannelTypes(c *gin.Context, expected string) []int {
+func pinnedTaskPluginIdentities(c *gin.Context, expected string) ([]int, []string) {
 	if c == nil || expected == "" {
-		return nil
+		return nil, nil
 	}
 	if value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint); exists {
 		pinned, ok := value.(jsplugin.PinnedEndpoint)
 		if ok && pinned.Generation != nil && len(pinned.Candidates) > 1 {
 			expectedFound := false
 			channelTypes := make([]int, 0, len(pinned.Candidates))
+			pluginKeys := make([]string, 0, len(pinned.Candidates))
 			seen := make(map[int]struct{}, len(pinned.Candidates))
 			for _, candidate := range pinned.Candidates {
 				if candidate.Plugin == nil {
@@ -330,6 +274,7 @@ func pinnedTaskPluginChannelTypes(c *gin.Context, expected string) []int {
 				if candidate.Plugin.Meta.Key == expected {
 					expectedFound = true
 				}
+				pluginKeys = append(pluginKeys, candidate.Plugin.Meta.Key)
 				for _, channelType := range candidate.Plugin.Meta.ChannelTypes {
 					if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
 						continue
@@ -344,14 +289,14 @@ func pinnedTaskPluginChannelTypes(c *gin.Context, expected string) []int {
 				}
 			}
 			if expectedFound {
-				return channelTypes
+				return channelTypes, pluginKeys
 			}
 		}
 	}
 	value, exists := c.Get(jsplugin.ContextKeyPinnedPlugin)
 	pinned, ok := value.(jsplugin.PinnedPlugin)
 	if !exists || !ok || pinned.Generation == nil || pinned.Plugin == nil || pinned.Plugin.Meta.Key != expected {
-		return nil
+		return nil, nil
 	}
 	channelTypes := make([]int, 0, len(pinned.Plugin.Meta.ChannelTypes))
 	for _, channelType := range pinned.Plugin.Meta.ChannelTypes {
@@ -360,8 +305,5 @@ func pinnedTaskPluginChannelTypes(c *gin.Context, expected string) []int {
 		}
 		channelTypes = append(channelTypes, channelType)
 	}
-	if len(channelTypes) == 0 {
-		return nil
-	}
-	return channelTypes
+	return channelTypes, []string{expected}
 }
