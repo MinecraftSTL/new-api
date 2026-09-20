@@ -47,6 +47,7 @@ import type {
   DashboardChartPreferences,
   DashboardFilters,
 } from '@/features/dashboard/types'
+import { ROLE } from '@/lib/roles'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -101,12 +102,13 @@ export function ModelsFilter(props: ModelsFilterProps) {
   const { t } = useTranslation()
   // 使用已缓存的用户数据，避免重复调用 API
   const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = user?.role && user.role >= 10
+  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
 
   const [open, setOpen] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(
     () =>
-      props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
+      props.currentFilters ??
+      buildDefaultDashboardFilters(props.preferences, isAdmin)
   )
   const [selectedRange, setSelectedRange] = useState<number | null>(() =>
     detectQuickRangeDays(props.currentFilters)
@@ -117,7 +119,8 @@ export function ModelsFilter(props: ModelsFilterProps) {
     // opens so a previously applied manual range is preserved.
     if (nextOpen) {
       const applied =
-        props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
+        props.currentFilters ??
+        buildDefaultDashboardFilters(props.preferences, isAdmin)
       setFilters(applied)
       setSelectedRange(detectQuickRangeDays(applied))
     }
@@ -137,7 +140,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
     const days = props.preferences.defaultTimeRangeDays
     const { start, end } = getRollingDateRange(days)
     setFilters({
-      ...buildDefaultDashboardFilters(props.preferences),
+      ...buildDefaultDashboardFilters(props.preferences, isAdmin),
       start_timestamp: start,
       end_timestamp: end,
     })

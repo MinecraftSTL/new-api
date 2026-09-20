@@ -44,6 +44,7 @@ import {
   getDefaultDays,
   getSavedChartPreferences,
   getSavedGranularity,
+  resolveBillingBasis,
   saveChartPreferences,
 } from './lib'
 import {
@@ -196,6 +197,7 @@ export function Dashboard() {
   const navigate = useNavigate()
   const params = route.useParams()
   const userRole = useAuthStore((state) => state.auth.user?.role)
+  const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
 
@@ -204,7 +206,7 @@ export function Dashboard() {
   const [chartPreferences, setChartPreferences] =
     useState<DashboardChartPreferences>(() => getSavedChartPreferences())
   const [modelFilters, setModelFilters] = useState<DashboardFilters>(() =>
-    buildDefaultDashboardFilters(getSavedChartPreferences())
+    buildDefaultDashboardFilters(getSavedChartPreferences(), isAdmin)
   )
   const [userChartsFilters, setUserChartsFilters] = useState<UserChartsFilters>(
     () => {
@@ -213,7 +215,10 @@ export function Dashboard() {
         timeGranularity: granularity,
         selectedRange: getDefaultDays(granularity),
         topUserLimit: 10,
-        billingBasis: 'charged',
+        billingBasis: resolveBillingBasis(
+          getSavedChartPreferences().billingBasis,
+          isAdmin
+        ),
       }
     }
   )
@@ -224,8 +229,8 @@ export function Dashboard() {
   }, [])
 
   const handleResetFilters = useCallback(() => {
-    setModelFilters(buildDefaultDashboardFilters(chartPreferences))
-  }, [chartPreferences])
+    setModelFilters(buildDefaultDashboardFilters(chartPreferences, isAdmin))
+  }, [chartPreferences, isAdmin])
 
   const handleDataUpdate = useCallback(
     (data: QuotaDataItem[], loading: boolean) => {
@@ -238,20 +243,28 @@ export function Dashboard() {
   const handleChartPreferencesChange = useCallback(
     (preferences: DashboardChartPreferences) => {
       setChartPreferences(preferences)
-      setModelFilters(buildDefaultDashboardFilters(preferences))
+      setModelFilters(buildDefaultDashboardFilters(preferences, isAdmin))
       saveChartPreferences(preferences)
     },
-    []
+    [isAdmin]
   )
 
   const meta = SECTION_META[activeSection] ?? SECTION_META.overview
-  const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
         (section) => section !== 'overview' && (section !== 'users' || isAdmin)
       ),
     [isAdmin]
+  )
+  // Non-admins never receive quota_before_group, so rendered views always fall
+  // back to the charged basis even if the stored preference says otherwise.
+  const viewFilters = useMemo(
+    () => ({
+      ...modelFilters,
+      billing_basis: resolveBillingBasis(modelFilters.billing_basis, isAdmin),
+    }),
+    [isAdmin, modelFilters]
   )
   const handleSectionChange = useCallback(
     (section: string) => {
@@ -352,7 +365,7 @@ export function Dashboard() {
               <FadeIn>
                 <Suspense fallback={<LogStatCardsFallback />}>
                   <LazyLogStatCards
-                    filters={modelFilters}
+                    filters={viewFilters}
                     onDataUpdate={handleDataUpdate}
                   />
                 </Suspense>
@@ -375,7 +388,7 @@ export function Dashboard() {
                     timeGranularity={
                       modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
                     }
-                    billingBasis={modelFilters.billing_basis}
+                    billingBasis={viewFilters.billing_basis}
                   />
                 </Suspense>
               </FadeIn>
@@ -388,7 +401,7 @@ export function Dashboard() {
                     timeGranularity={
                       modelFilters.time_granularity || DEFAULT_TIME_GRANULARITY
                     }
-                    billingBasis={modelFilters.billing_basis}
+                    billingBasis={viewFilters.billing_basis}
                   />
                 </Suspense>
               </FadeIn>
@@ -408,7 +421,7 @@ export function Dashboard() {
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyFlowCharts
-                  filters={modelFilters}
+                  filters={viewFilters}
                   sensitiveVisible={flowSensitiveVisible}
                 />
               </Suspense>

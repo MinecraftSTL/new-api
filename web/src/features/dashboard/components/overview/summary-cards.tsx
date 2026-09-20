@@ -28,7 +28,11 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
-import { quotaForBillingBasis } from '@/features/dashboard/lib'
+import {
+  getSavedChartPreferences,
+  quotaForBillingBasis,
+  resolveBillingBasis,
+} from '@/features/dashboard/lib'
 import type { BillingBasis, QuotaDataItem } from '@/features/dashboard/types'
 import { useStatus } from '@/hooks/use-status'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
@@ -147,8 +151,9 @@ export function SummaryCards() {
   const user = useAuthStore((state) => state.auth.user)
   const { status, loading } = useStatus()
   const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
-  const [adminBillingBasis, setAdminBillingBasis] =
-    useState<BillingBasis>('charged')
+  const [adminBillingBasis, setAdminBillingBasis] = useState<BillingBasis>(() =>
+    resolveBillingBasis(getSavedChartPreferences().billingBasis, isAdmin)
+  )
 
   const summaryTimeRange = useMemo(() => computeTimeRange(1), [])
   const remainQuota = Number(user?.quota ?? 0)

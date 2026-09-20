@@ -34,3 +34,14 @@ export function quotaForBillingBasis(
   const quota = Number(rawQuota)
   return Number.isFinite(quota) ? quota : 0
 }
+
+/**
+ * Non-admins never receive the pre-multiplier quota, so every read path must
+ * fall back to the charged basis even when a stale preference asks otherwise.
+ */
+export function resolveBillingBasis(
+  billingBasis: BillingBasis | undefined,
+  isAdmin: boolean
+): BillingBasis {
+  return isAdmin && billingBasis === 'before_group' ? 'before_group' : 'charged'
+}

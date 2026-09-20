@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   CONSUMPTION_DISTRIBUTION_CHART_OPTIONS,
   MODEL_ANALYTICS_CHART_OPTIONS,
@@ -42,7 +43,9 @@ import type {
   DashboardChartPreferences,
   ModelAnalyticsChartTab,
 } from '@/features/dashboard/types'
+import { ROLE } from '@/lib/roles'
 import type { TimeGranularity } from '@/lib/time'
+import { useAuthStore } from '@/stores/auth-store'
 
 interface ModelsChartPreferencesProps {
   preferences: DashboardChartPreferences
@@ -51,6 +54,8 @@ interface ModelsChartPreferencesProps {
 
 export function ModelsChartPreferences(props: ModelsChartPreferencesProps) {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<DashboardChartPreferences>(
     props.preferences
@@ -219,6 +224,31 @@ export function ModelsChartPreferences(props: ModelsChartPreferencesProps) {
           </SelectContent>
         </Select>
       </div>
+      {isAdmin && (
+        <div className='flex items-center justify-between gap-4 rounded-md border p-3'>
+          <div className='grid gap-0.5'>
+            <Label htmlFor='default_include_group_multiplier'>
+              {t('Default include group multiplier')}
+            </Label>
+            <p className='text-muted-foreground text-xs'>
+              {draft.billingBasis === 'before_group'
+                ? t('Showing quota before the group multiplier')
+                : t('Showing quota after the group multiplier')}
+            </p>
+          </div>
+          <Switch
+            id='default_include_group_multiplier'
+            checked={draft.billingBasis !== 'before_group'}
+            onCheckedChange={(checked) =>
+              setDraft((prev) => ({
+                ...prev,
+                billingBasis: checked ? 'charged' : 'before_group',
+              }))
+            }
+            aria-label={t('Default include group multiplier')}
+          />
+        </div>
+      )}
     </Dialog>
   )
 }

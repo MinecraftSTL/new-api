@@ -207,6 +207,7 @@ export interface DashboardChartPreferences {
   modelAnalyticsChart: ModelAnalyticsChartTab
   defaultTimeRangeDays: number
   defaultTimeGranularity: TimeGranularity
+  billingBasis: BillingBasis
 }
 
 // User analytics selections are held by the dashboard parent so they survive

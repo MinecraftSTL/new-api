@@ -26,6 +26,7 @@ import {
   TIME_RANGE_BY_GRANULARITY,
 } from '@/features/dashboard/constants'
 import type {
+  BillingBasis,
   ConsumptionDistributionChartType,
   DashboardChartPreferences,
   DashboardFilters,
@@ -33,8 +34,14 @@ import type {
 } from '@/features/dashboard/types'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 
+import { resolveBillingBasis } from './billing'
+
 function isTimeGranularity(value: unknown): value is TimeGranularity {
   return value === 'hour' || value === 'day' || value === 'week'
+}
+
+function isBillingBasis(value: unknown): value is BillingBasis {
+  return value === 'charged' || value === 'before_group'
 }
 
 function getLegacySavedGranularity(): TimeGranularity {
@@ -119,6 +126,9 @@ export function getSavedChartPreferences(): DashboardChartPreferences {
       defaultTimeGranularity: isTimeGranularity(parsed.defaultTimeGranularity)
         ? parsed.defaultTimeGranularity
         : fallbackPreferences.defaultTimeGranularity,
+      billingBasis: isBillingBasis(parsed.billingBasis)
+        ? parsed.billingBasis
+        : fallbackPreferences.billingBasis,
     }
   } catch {
     return fallbackPreferences
@@ -141,7 +151,8 @@ export function getDefaultDays(granularity?: TimeGranularity): number {
 }
 
 export function buildDefaultDashboardFilters(
-  preferences: DashboardChartPreferences = getSavedChartPreferences()
+  preferences: DashboardChartPreferences = getSavedChartPreferences(),
+  isAdmin = false
 ): DashboardFilters {
   const { start, end } = getRollingDateRange(preferences.defaultTimeRangeDays)
   return {
@@ -149,7 +160,7 @@ export function buildDefaultDashboardFilters(
     start_timestamp: start,
     end_timestamp: end,
     time_granularity: preferences.defaultTimeGranularity,
-    billing_basis: 'charged',
+    billing_basis: resolveBillingBasis(preferences.billingBasis, isAdmin),
   }
 }
 
