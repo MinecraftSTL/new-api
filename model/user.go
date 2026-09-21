@@ -532,6 +532,20 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+// GetUserByIdForUpdateInTx locks the target user for the caller's transaction.
+// SQLite has no FOR UPDATE syntax; its transaction write locking provides the
+// equivalent serialization guarantee.
+func GetUserByIdForUpdateInTx(tx *gorm.DB, id int) (*User, error) {
+	if id == 0 {
+		return nil, errors.New("id 为空！")
+	}
+	user := User{Id: id}
+	if err := lockForUpdate(tx).First(&user, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 // GetSelfUserById reads dashboard profile data and password existence in one
 // query. The password hash and management access token are never selected.
 func GetSelfUserById(id int) (*User, error) {

@@ -78,7 +78,6 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
-  adjustUserQuota,
   createUser,
   updateUser,
   getUser,
@@ -93,7 +92,7 @@ import {
   transformFormDataToPayload,
   transformUserToFormDefaults,
 } from '../lib'
-import type { User } from '../types'
+import type { User, UserQuotaAdjustment } from '../types'
 import { useUsers } from './users-provider'
 
 type UsersMutateDrawerProps = {
@@ -215,10 +214,7 @@ export function UsersMutateDrawer({
       }
     }
 
-    let quotaAdjustment: {
-      mode: 'add' | 'subtract' | 'override'
-      value: number
-    } | null = null
+    let quotaAdjustment: UserQuotaAdjustment | null = null
     if (quotaAmountInUnits !== null) {
       if (quotaOperator === '=') {
         quotaAdjustment = { mode: 'override', value: quotaAmountInUnits }
@@ -235,7 +231,8 @@ export function UsersMutateDrawer({
       const payload = transformFormDataToPayload(
         data,
         currentRow?.id,
-        permissionCatalog
+        permissionCatalog,
+        quotaAdjustment ?? undefined
       )
       const result = isUpdate
         ? await updateUser(payload as typeof payload & { id: number })
@@ -244,25 +241,6 @@ export function UsersMutateDrawer({
       if (!result.success) {
         handleServerError(result, t(ERROR_MESSAGES.CREATE_FAILED))
         return
-      }
-
-      if (quotaAdjustment && currentRow) {
-        try {
-          const quotaResult = await adjustUserQuota({
-            id: currentRow.id,
-            action: 'add_quota',
-            ...quotaAdjustment,
-          })
-          if (!quotaResult.success) {
-            triggerRefresh()
-            handleServerError(quotaResult, t('Failed to adjust quota'))
-            return
-          }
-        } catch (error) {
-          triggerRefresh()
-          handleServerError(error, t('Failed to adjust quota'))
-          return
-        }
       }
 
       let successMessage = isUpdate

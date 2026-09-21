@@ -117,12 +117,19 @@ export interface SearchUsersParams {
   sort_order?: UserSortOrder
 }
 
+export type QuotaAdjustMode = 'add' | 'subtract' | 'override'
+
+export interface UserQuotaAdjustment {
+  mode: QuotaAdjustMode
+  value: number
+}
+
 export interface UserFormData {
   username: string
   display_name: string
   password?: string
   role?: number // Only used when creating user
-  quota?: number // Only used when updating user
+  quota_adjustment?: UserQuotaAdjustment // Only used when updating user
   group?: string // Only used when updating user
   remark?: string // Only used when updating user
   admin_permissions?: AdminPermissionMatrix
@@ -135,15 +142,6 @@ export type ManageUserAction =
   | 'disable'
   | 'delete'
   | 'add_quota'
-
-export type QuotaAdjustMode = 'add' | 'subtract' | 'override'
-
-export interface ManageUserQuotaPayload {
-  id: number
-  action: 'add_quota'
-  mode: QuotaAdjustMode
-  value: number
-}
 
 // ============================================================================
 // Dialog Types

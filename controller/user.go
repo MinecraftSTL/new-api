@@ -644,13 +644,29 @@ func GetUserModels(c *gin.Context) {
 	})
 }
 
+var (
+	errCannotManageTargetUser = errors.New("cannot manage target user")
+	errInvalidUpdatedUserRole = errors.New("invalid updated user role")
+)
+
+type UserQuotaAdjustmentRequest struct {
+	Mode  string `json:"mode"`
+	Value int    `json:"value"`
+}
+
+type UpdateUserRequest struct {
+	model.User
+	QuotaAdjustment *UserQuotaAdjustmentRequest `json:"quota_adjustment,omitempty"`
+}
+
 func UpdateUser(c *gin.Context) {
-	var updatedUser model.User
-	err := common.DecodeJson(c.Request.Body, &updatedUser)
-	if err != nil || updatedUser.Id == 0 {
+	var req UpdateUserRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil || req.Id == 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+
+	updatedUser := req.User
 	updatedUser.Username = strings.TrimSpace(updatedUser.Username)
 	if updatedUser.Username == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
@@ -660,34 +676,74 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 		return
 	}
-	originUser, err := model.GetUserById(updatedUser.Id, false)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if updatedUser.Role != common.RoleGuestUser && updatedUser.Role != originUser.Role {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	updatedUser.Role = originUser.Role
+
+	requestedRole := updatedUser.Role
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, originUser.Role) {
-		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
-		return
-	}
 	updatePassword := updatedUser.Password != ""
 	authzTouched := false
+	quotaAttempted := false
+	var originUser model.User
+	var quotaAdjustment *model.UserQuotaAdjustment
+
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		lockedUser, err := model.GetUserByIdForUpdateInTx(tx, updatedUser.Id)
+		if err != nil {
+			return err
+		}
+		originUser = *lockedUser
+
+		if requestedRole != common.RoleGuestUser && requestedRole != lockedUser.Role {
+			return errInvalidUpdatedUserRole
+		}
+		updatedUser.Role = lockedUser.Role
+		if !canManageTargetRole(myRole, lockedUser.Role) {
+			return errCannotManageTargetUser
+		}
+
 		if err := updatedUser.EditWithTx(tx, updatePassword); err != nil {
 			return err
 		}
-		touched, err := updateAdminPermissionsForUserInTx(c, tx, updatedUser.Id, originUser.Role, updatedUser.AdminPermissions)
+		touched, err := updateAdminPermissionsForUserInTx(c, tx, updatedUser.Id, lockedUser.Role, updatedUser.AdminPermissions)
+		if err != nil {
+			return err
+		}
 		authzTouched = touched
-		return err
+
+		// Keep the existing operation order: profile and permissions first,
+		// quota adjustment last. All three writes share this transaction.
+		if req.QuotaAdjustment != nil {
+			quotaAttempted = true
+			quotaAdjustment, err = model.AdjustUserQuotaInTx(
+				tx,
+				&updatedUser,
+				myRole,
+				req.QuotaAdjustment.Mode,
+				req.QuotaAdjustment.Value,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	}); err != nil {
-		common.ApiError(c, err)
+		switch {
+		case errors.Is(err, errInvalidUpdatedUserRole):
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		case errors.Is(err, errCannotManageTargetUser):
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		case req.QuotaAdjustment != nil && quotaAttempted:
+			reason := respondUserQuotaAdjustmentError(c, req.QuotaAdjustment.Mode, req.QuotaAdjustment.Value, err)
+			recordUserQuotaAdjustmentFailure(c, ManageRequest{
+				Id:    updatedUser.Id,
+				Mode:  req.QuotaAdjustment.Mode,
+				Value: req.QuotaAdjustment.Value,
+			}, reason)
+		default:
+			common.ApiError(c, err)
+		}
 		return
 	}
+
 	if authzTouched {
 		if err := authz.ReloadPolicy(); err != nil {
 			common.ApiError(c, err)
@@ -704,15 +760,24 @@ func UpdateUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	model.SyncUserQuotaAdjustmentCache(quotaAdjustment)
+
 	recordManageAuditFor(c, updatedUser.Id, "user.update", map[string]any{
 		"username": originUser.Username,
 		"id":       updatedUser.Id,
 	})
+	if quotaAdjustment != nil && req.QuotaAdjustment != nil {
+		recordUserQuotaAdjustmentSuccess(c, ManageRequest{
+			Id:    updatedUser.Id,
+			Mode:  req.QuotaAdjustment.Mode,
+			Value: req.QuotaAdjustment.Value,
+		}, quotaAdjustment)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 	})
-	return
 }
 
 func AdminClearUserBinding(c *gin.Context) {

@@ -11,6 +11,86 @@ import (
 	"gorm.io/gorm"
 )
 
+func respondUserQuotaAdjustmentError(c *gin.Context, mode string, value int, err error) string {
+	reason := "database_error"
+	switch {
+	case errors.Is(err, model.ErrInvalidUserQuotaAdjustment):
+		reason = "invalid_parameters"
+		if (mode == "add" || mode == "subtract") && value <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
+		} else {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		}
+	case errors.Is(err, model.ErrUserQuotaPermission):
+		reason = "permission_denied"
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		reason = "target_not_found"
+		common.ApiErrorI18n(c, i18n.MsgUserNotExists)
+	case errors.Is(err, model.ErrWalletQuotaLimitExceeded):
+		reason = "quota_limit_exceeded"
+		common.ApiError(c, err)
+	default:
+		common.ApiError(c, err)
+	}
+	return reason
+}
+
+func recordUserQuotaAdjustmentFailure(c *gin.Context, req ManageRequest, failureReason string) {
+	action := "generic"
+	params := model.AuditFields{
+		"target_user_id":  req.Id,
+		"mode":            req.Mode,
+		"requested_quota": req.Value,
+	}
+	switch req.Mode {
+	case "add":
+		action = "user.quota_add"
+	case "subtract":
+		action = "user.quota_subtract"
+	case "override":
+		action = "user.quota_override"
+	}
+	params["failure_reason"] = failureReason
+	model.RecordOperationAuditLog(c.GetInt("id"), c.GetInt("role"), "Failed user quota adjustment", c.ClientIP(), action, params,
+		auditOperatorInfo(c), &model.AuditRequestInfo{
+			Method: c.Request.Method, Route: c.FullPath(), Status: c.Writer.Status(), Success: false,
+		}, c)
+	markAuditLogged(c)
+}
+
+func recordUserQuotaAdjustmentSuccess(c *gin.Context, req ManageRequest, adjustment *model.UserQuotaAdjustment) {
+	action := "generic"
+	params := model.AuditFields{
+		"target_user_id":  req.Id,
+		"mode":            req.Mode,
+		"requested_quota": req.Value,
+	}
+	switch req.Mode {
+	case "add":
+		action = "user.quota_add"
+	case "subtract":
+		action = "user.quota_subtract"
+	case "override":
+		action = "user.quota_override"
+	}
+	params["target_username"] = adjustment.Username
+	params["from"] = adjustment.Before
+	params["to"] = adjustment.After
+	if req.Mode != "override" {
+		params["quota"] = req.Value
+	}
+
+	model.RecordOperationAuditLog(c.GetInt("id"), c.GetInt("role"), auditContentEN(action, params), c.ClientIP(), action, params,
+		auditOperatorInfo(c), &model.AuditRequestInfo{
+			Method: c.Request.Method, Route: c.FullPath(), Status: http.StatusOK, Success: true,
+		}, c)
+	operation := model.AuditOperation{Action: action, Params: params}
+	model.RecordLogWithAdminInfo(adjustment.UserID, model.LogTypeTopup,
+		auditContentEN(action, params), auditOperatorInfo(c), &operation, c)
+	markAuditLogged(c)
+}
+
 func manageUserQuota(c *gin.Context, req ManageRequest) {
 	action := "generic"
 	params := model.AuditFields{
