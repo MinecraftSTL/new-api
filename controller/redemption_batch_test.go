@@ -107,6 +107,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			router := gin.New()
 			router.Use(middleware.RequestId())
 			router.POST("/api/redemption/batch", middleware.AdminAuth(), DeleteRedemptionBatch)
+			router.POST("/api/redemption/batch/update", middleware.AdminAuth(), UpdateRedemptionBatch)
 
 			overLimit := make([]int, 1001)
 			for index := range overLimit {
@@ -196,6 +197,40 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				assert.True(t, code.DeletedAt.Valid)
 			}
 			assert.False(t, all[15].DeletedAt.Valid)
+
+			updateBody, err := common.Marshal(map[string]any{
+				"ids":          []int{codes[15].Id},
+				"status":       common.RedemptionCodeStatusEnabled,
+				"name":         "updated-name",
+				"quota":        250,
+				"expired_time": common.GetTimestamp() + 3600,
+			})
+			require.NoError(t, err)
+			updateResponse := httptest.NewRecorder()
+			updateRequest := httptest.NewRequest(
+				http.MethodPost,
+				"/api/redemption/batch/update",
+				bytes.NewReader(updateBody),
+			)
+			updateRequest.Header.Set("Authorization", "Bearer "+token)
+			router.ServeHTTP(updateResponse, updateRequest)
+			assert.Equal(t, http.StatusOK, updateResponse.Code)
+
+			var updateResult struct {
+				Success bool              `json:"success"`
+				Data    batchUpdateResult `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(updateResponse.Body.Bytes(), &updateResult))
+			assert.True(t, updateResult.Success)
+			assert.Equal(t, 1, updateResult.Data.Updated)
+			assert.Empty(t, updateResult.Data.Failed)
+
+			var updated model.Redemption
+			require.NoError(t, model.DB.First(&updated, codes[15].Id).Error)
+			assert.Equal(t, common.RedemptionCodeStatusEnabled, updated.Status)
+			assert.Equal(t, "updated-name", updated.Name)
+			assert.Equal(t, 250, updated.Quota)
+			assert.True(t, updated.ExpiredTime > common.GetTimestamp())
 		})
 	}
 }

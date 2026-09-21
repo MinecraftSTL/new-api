@@ -26,6 +26,8 @@ import type {
   SearchApiKeysParams,
   ApiKeyFormData,
   TokenAutoGroupsConfig,
+  BatchUpdateApiKeysPayload,
+  BatchUpdateResult,
 } from './types'
 
 // ============================================================================
@@ -105,6 +107,13 @@ export async function updateApiKeyStatus(
   status: number
 ): Promise<ApiResponse<ApiKey>> {
   const res = await api.put('/api/token/?status_only=true', { id, status })
+  return res.data
+}
+
+export async function batchUpdateApiKeys(
+  data: BatchUpdateApiKeysPayload
+): Promise<ApiResponse<BatchUpdateResult>> {
+  const res = await api.post('/api/token/batch/update', data)
   return res.data
 }
 

@@ -25,6 +25,8 @@ import type {
   GetRedemptionsResponse,
   SearchRedemptionsParams,
   RedemptionFormData,
+  BatchUpdateRedemptionsPayload,
+  BatchUpdateResult,
 } from './types'
 
 // ============================================================================
@@ -96,6 +98,13 @@ export async function deleteRedemption(id: number): Promise<ApiResponse> {
 // Delete invalid redemption codes (used, disabled, expired)
 export async function deleteInvalidRedemptions(): Promise<ApiResponse<number>> {
   const res = await api.delete('/api/redemption/invalid')
+  return res.data
+}
+
+export async function batchUpdateRedemptions(
+  data: BatchUpdateRedemptionsPayload
+): Promise<ApiResponse<BatchUpdateResult>> {
+  const res = await api.post('/api/redemption/batch/update', data)
   return res.data
 }
 

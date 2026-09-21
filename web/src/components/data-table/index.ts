@@ -55,6 +55,7 @@ export {
   type DataTableViewModeToggleProps,
 } from './toolbar/view-mode-toggle'
 export { useDataTable } from './hooks/use-data-table'
+export { useSelectionColumn } from './core/selection-column'
 export {
   useDataTableViewMode,
   DATA_TABLE_VIEW_MODES,
