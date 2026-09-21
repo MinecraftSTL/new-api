@@ -27,7 +27,7 @@ import { quotaUnitsToDollars } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 
 import { DEFAULT_GROUP } from '../constants'
-import type { User, UserFormData } from '../types'
+import type { User, UserFormData, UserQuotaAdjustment } from '../types'
 
 // ============================================================================
 // Form Schema
@@ -74,7 +74,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
 export function transformFormDataToPayload(
   data: UserFormValues,
   userId?: number,
-  catalog?: PermissionCatalog
+  catalog?: PermissionCatalog,
+  quotaAdjustment?: UserQuotaAdjustment
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
     username: data.username,
@@ -98,10 +99,13 @@ export function transformFormDataToPayload(
   if (userId === undefined) {
     payload.role = role
   } else {
-    // For update: quota is adjusted atomically via /api/user/manage, not sent here
+    // For update: send the quota adjustment in the same atomic request.
     payload.group = data.group
     payload.remark = data.remark || undefined
     payload.id = userId
+    if (quotaAdjustment) {
+      payload.quota_adjustment = quotaAdjustment
+    }
   }
 
   return payload
