@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -33,7 +51,7 @@ function renderDrawer() {
   useAuthStore
     .getState()
     .auth.setUser({ id: 1, username: 'operator', role: 100 })
-  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/authz/catalog') {
       return {
         data: {
@@ -48,9 +66,6 @@ function renderDrawer() {
     return { data: { success: true, data: target } }
   })
   const put = vi.spyOn(api, 'put').mockResolvedValue({
-    data: { success: true },
-  })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({
     data: { success: true },
   })
 
@@ -69,7 +84,7 @@ function renderDrawer() {
     </QueryClientProvider>
   )
 
-  return { get, put, post }
+  return { put }
 }
 
 async function selectOperator(operator: QuotaAdjustOperator) {
@@ -98,7 +113,7 @@ afterEach(() => {
 })
 
 it('stages quota edits inline and keeps the amount when the operator changes', async () => {
-  const { post } = renderDrawer()
+  const { put } = renderDrawer()
   await screen.findByDisplayValue('Managed user')
 
   expect(
@@ -120,7 +135,7 @@ it('stages quota edits inline and keeps the amount when the operator changes', a
   await selectOperator('-=')
   expect(amount).toHaveValue(-5)
   expect(screen.getByText('Current quota: 100 + 5 = 105')).toBeVisible()
-  expect(post).not.toHaveBeenCalled()
+  expect(put).not.toHaveBeenCalled()
 })
 
 it.each<[QuotaAdjustOperator, string, { mode: string; value: number }]>([
@@ -130,9 +145,9 @@ it.each<[QuotaAdjustOperator, string, { mode: string; value: number }]>([
   ['=', '-5', { mode: 'override', value: -5 }],
   ['=', '0', { mode: 'override', value: 0 }],
 ])(
-  'applies %s with amount %s only when saving',
+  'sends %s with amount %s in the single save request',
   async (operator, amount, expectedAdjustment) => {
-    const { post } = renderDrawer()
+    const { put } = renderDrawer()
     await screen.findByDisplayValue('Managed user')
 
     const user = userEvent.setup()
@@ -140,51 +155,48 @@ it.each<[QuotaAdjustOperator, string, { mode: string; value: number }]>([
       await selectOperator(operator)
     }
     await user.type(screen.getByRole('spinbutton', { name: 'Amount' }), amount)
-    expect(post).not.toHaveBeenCalled()
+    expect(put).not.toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
     await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/api/user/manage', {
-        id: 2,
-        action: 'add_quota',
-        ...expectedAdjustment,
-      })
+      expect(put).toHaveBeenCalledWith(
+        '/api/user/',
+        expect.objectContaining({
+          id: 2,
+          quota_adjustment: expectedAdjustment,
+        })
+      )
     )
-    expect(post).toHaveBeenCalledTimes(1)
+    expect(put).toHaveBeenCalledTimes(1)
   }
 )
 
 it.each<[QuotaAdjustOperator, string]>([
   ['=', ''],
   ['+=', '0'],
-])(
-  'does not send a quota adjustment for %s with amount %s',
-  async (operator, amount) => {
-    const { put, post } = renderDrawer()
-    await screen.findByDisplayValue('Managed user')
+])('omits quota_adjustment for %s with amount %s', async (operator, amount) => {
+  const { put } = renderDrawer()
+  await screen.findByDisplayValue('Managed user')
 
-    const user = userEvent.setup()
-    if (operator !== '=') {
-      await selectOperator(operator)
-    }
-    if (amount) {
-      await user.type(
-        screen.getByRole('spinbutton', { name: 'Amount' }),
-        amount
-      )
-    }
-
-    await user.click(screen.getByRole('button', { name: 'Save changes' }))
-    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
-    expect(post).not.toHaveBeenCalled()
+  const user = userEvent.setup()
+  if (operator !== '=') {
+    await selectOperator(operator)
   }
-)
+  if (amount) {
+    await user.type(screen.getByRole('spinbutton', { name: 'Amount' }), amount)
+  }
 
-it('does not adjust quota when user update fails', async () => {
-  const { put, post } = renderDrawer()
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  const payload = put.mock.calls[0][1] as Record<string, unknown>
+  expect(payload).not.toHaveProperty('quota_adjustment')
+})
+
+it('keeps the drawer open when the combined save fails', async () => {
+  const { put } = renderDrawer()
   await screen.findByDisplayValue('Managed user')
   put.mockResolvedValueOnce({
-    data: { success: false, message: 'user update failed' },
+    data: { success: false, message: 'combined save failed' },
   })
 
   const user = userEvent.setup()
@@ -192,21 +204,11 @@ it('does not adjust quota when user update fails', async () => {
   await user.click(screen.getByRole('button', { name: 'Save changes' }))
 
   await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
-  expect(post).not.toHaveBeenCalled()
-})
-
-it('keeps the drawer open when the quota adjustment fails', async () => {
-  const { post } = renderDrawer()
-  await screen.findByDisplayValue('Managed user')
-  post.mockResolvedValueOnce({
-    data: { success: false, message: 'quota adjustment failed' },
+  const payload = put.mock.calls[0][1] as Record<string, unknown>
+  expect(payload.quota_adjustment).toEqual({
+    mode: 'override',
+    value: 5,
   })
-
-  const user = userEvent.setup()
-  await user.type(screen.getByRole('spinbutton', { name: 'Amount' }), '5')
-  await user.click(screen.getByRole('button', { name: 'Save changes' }))
-
-  await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
   expect(screen.getByRole('button', { name: 'Save changes' })).toBeVisible()
   expect(
     screen.queryByText('Quota adjusted successfully')

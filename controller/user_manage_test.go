@@ -666,3 +666,155 @@ func TestManageUserQuotaCacheUsesCommittedIntegerDifference(t *testing.T) {
 		})
 	}
 }
+
+func performUpdateUserRequest(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("id", 9999)
+	c.Set("role", common.RoleRootUser)
+	c.Set("username", "root-operator")
+	c.Set(common.RequestIdKey, "combined-update-test-request")
+	UpdateUser(c)
+	return recorder
+}
+
+func initUpdateUserAuthz(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	previousMaster := common.IsMasterNode
+	common.IsMasterNode = false
+	t.Cleanup(func() { common.IsMasterNode = previousMaster })
+	require.NoError(t, authz.Init(db))
+}
+
+func TestUpdateUserWithQuotaCommitsProfilePermissionsAndQuotaTogether(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	initUpdateUserAuthz(t, db)
+	operator := createQuotaTestOperator(t, db, common.RoleRootUser)
+	target := model.User{
+		Username: "combined-before", DisplayName: "Before", Password: "password",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+		Group: "default", Quota: 1000, AuthVersion: 1, AffCode: "combined-target-aff",
+	}
+	require.NoError(t, db.Create(&target).Error)
+
+	updateOrder := make([]string, 0, 2)
+	const callbackName = "test:combined_user_update_order"
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement == nil || tx.Statement.Table != "users" {
+			return
+		}
+		updates, ok := tx.Statement.Dest.(map[string]any)
+		if !ok {
+			return
+		}
+		if _, ok := updates["quota"]; ok {
+			updateOrder = append(updateOrder, "quota")
+			return
+		}
+		updateOrder = append(updateOrder, "profile")
+	}))
+	t.Cleanup(func() { _ = db.Callback().Update().Remove(callbackName) })
+
+	recorder := performUpdateUserRequest(t, fmt.Sprintf(
+		"{\"id\":%d,\"username\":\"combined-after\",\"display_name\":\"After\",\"remark\":\"updated\",\"group\":\"default\",\"quota_adjustment\":{\"mode\":\"add\",\"value\":250}}",
+		target.Id,
+	))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "\"success\":true")
+	require.NotEmpty(t, updateOrder)
+	assert.Equal(t, "quota", updateOrder[len(updateOrder)-1])
+	for _, update := range updateOrder[:len(updateOrder)-1] {
+		assert.Equal(t, "profile", update)
+	}
+
+	var updated model.User
+	require.NoError(t, db.First(&updated, target.Id).Error)
+	assert.Equal(t, "combined-after", updated.Username)
+	assert.Equal(t, "After", updated.DisplayName)
+	assert.Equal(t, "updated", updated.Remark)
+	assert.Equal(t, 1250, updated.Quota)
+	assert.Equal(t, target.Group, updated.Group)
+
+	var topupLogs []model.Log
+	require.NoError(t, db.Where("type = ?", model.LogTypeTopup).Find(&topupLogs).Error)
+	require.Len(t, topupLogs, 1)
+	assert.Equal(t, target.Id, topupLogs[0].UserId)
+	assert.Equal(t, "Increased user quota by 250", topupLogs[0].Content)
+	assert.Equal(t, "combined-update-test-request", topupLogs[0].RequestId)
+
+	var audits []model.AuditLog
+	require.NoError(t, db.Order("id asc").Find(&audits).Error)
+	require.Len(t, audits, 2)
+	assert.Equal(t, "user.update", audits[0].Action)
+	assert.Equal(t, "user.quota_add", audits[1].Action)
+	assert.Equal(t, operator.Username, audits[1].Username)
+}
+
+func TestUpdateUserWithQuotaRollsBackProfileWhenQuotaFails(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	initUpdateUserAuthz(t, db)
+	createQuotaTestOperator(t, db, common.RoleRootUser)
+	target := model.User{
+		Username: "rb-before", DisplayName: "Before", Password: "password",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+		Group: "default", Quota: common.MaxWalletQuota, AuthVersion: 1, AffCode: "combined-rollback-aff",
+	}
+	require.NoError(t, db.Create(&target).Error)
+
+	recorder := performUpdateUserRequest(t, fmt.Sprintf(
+		"{\"id\":%d,\"username\":\"rb-after\",\"display_name\":\"After\",\"quota_adjustment\":{\"mode\":\"add\",\"value\":1}}",
+		target.Id,
+	))
+	require.Contains(t, recorder.Body.String(), "\"success\":false")
+
+	var updated model.User
+	require.NoError(t, db.First(&updated, target.Id).Error)
+	assert.Equal(t, target.Username, updated.Username)
+	assert.Equal(t, target.DisplayName, updated.DisplayName)
+	assert.Equal(t, common.MaxWalletQuota, updated.Quota)
+
+	var audits []model.AuditLog
+	require.NoError(t, db.Find(&audits).Error)
+	require.Len(t, audits, 1)
+	assert.Equal(t, "user.quota_add", audits[0].Action)
+	assert.False(t, audits[0].Success)
+	params, err := common.Marshal(audits[0].Other.Op.Params)
+	require.NoError(t, err)
+	expected, err := common.Marshal(model.AuditFields{
+		"target_user_id": target.Id, "mode": "add", "requested_quota": 1, "failure_reason": "quota_limit_exceeded",
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expected), string(params))
+}
+
+func TestUpdateUserWithQuotaRollsBackQuotaWhenProfileFails(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	initUpdateUserAuthz(t, db)
+	createQuotaTestOperator(t, db, common.RoleRootUser)
+	require.NoError(t, db.Create(&model.User{
+		Username: "taken-name", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+	}).Error)
+	target := model.User{
+		Username: "pb-before", DisplayName: "Before", Password: "password",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+		Group: "default", Quota: 1000, AuthVersion: 1, AffCode: "combined-profile-aff",
+	}
+	require.NoError(t, db.Create(&target).Error)
+
+	recorder := performUpdateUserRequest(t, fmt.Sprintf(
+		"{\"id\":%d,\"username\":\"taken-name\",\"display_name\":\"After\",\"quota_adjustment\":{\"mode\":\"add\",\"value\":250}}",
+		target.Id,
+	))
+	require.Contains(t, recorder.Body.String(), "\"success\":false")
+
+	var updated model.User
+	require.NoError(t, db.First(&updated, target.Id).Error)
+	assert.Equal(t, target.Username, updated.Username)
+	assert.Equal(t, target.DisplayName, updated.DisplayName)
+	assert.Equal(t, 1000, updated.Quota)
+}
