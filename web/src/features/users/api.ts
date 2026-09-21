@@ -28,6 +28,8 @@ import type {
   SearchUsersParams,
   UserFormData,
   ManageUserAction,
+  BatchUpdateUsersPayload,
+  BatchUpdateResult,
   ApiResponse,
 } from './types'
 
@@ -164,6 +166,13 @@ export async function getPermissionCatalog(): Promise<PermissionCatalog> {
     resources: res.data?.data?.resources ?? [],
     roles: res.data?.data?.roles ?? [],
   }
+}
+
+export async function batchUpdateUsers(
+  data: BatchUpdateUsersPayload
+): Promise<ApiResponse<BatchUpdateResult>> {
+  const res = await api.post('/api/user/batch', data)
+  return res.data
 }
 
 // ============================================================================

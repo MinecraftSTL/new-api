@@ -143,6 +143,23 @@ export type ManageUserAction =
   | 'delete'
   | 'add_quota'
 
+export interface BatchUpdateFailure {
+  id: number
+  message?: string
+}
+
+export interface BatchUpdateResult {
+  updated: number
+  failed?: BatchUpdateFailure[]
+}
+
+export interface BatchUpdateUsersPayload {
+  ids: number[]
+  status?: number
+  group?: string
+  quota_adjustment?: UserQuotaAdjustment
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

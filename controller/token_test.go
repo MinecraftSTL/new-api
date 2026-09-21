@@ -892,3 +892,60 @@ func verifyAPITokenAudit(t *testing.T) {
 		assert.EqualValues(t, 1, count)
 	})
 }
+
+func TestUpdateTokenBatchAppliesOwnedFieldsAndRejectsDuplicateIDs(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	owned := seedToken(t, db, 1, "batch-owned", "batch-owned-key-123456")
+	foreign := seedToken(t, db, 2, "batch-foreign", "batch-foreign-key-12345")
+
+	body := map[string]any{
+		"ids":                  []int{owned.Id},
+		"status":               common.TokenStatusDisabled,
+		"remain_quota":         250,
+		"unlimited_quota":      false,
+		"group":                "vip",
+		"expired_time":         common.GetTimestamp() + 3600,
+		"model_limits_enabled": true,
+		"model_limits":         "gpt-4o,gpt-4o-mini",
+	}
+	ctx, recorder := newAuthenticatedContext(
+		t,
+		http.MethodPost,
+		"/api/token/batch/update",
+		body,
+		1,
+	)
+	UpdateTokenBatch(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	var result batchUpdateResult
+	require.NoError(t, common.Unmarshal(response.Data, &result))
+	require.Equal(t, 1, result.Updated)
+	require.Empty(t, result.Failed)
+
+	var updated model.Token
+	require.NoError(t, db.First(&updated, owned.Id).Error)
+	assert.Equal(t, common.TokenStatusDisabled, updated.Status)
+	assert.Equal(t, 250, updated.RemainQuota)
+	assert.False(t, updated.UnlimitedQuota)
+	assert.Equal(t, "vip", updated.Group)
+	assert.True(t, updated.ExpiredTime > common.GetTimestamp())
+	assert.True(t, updated.ModelLimitsEnabled)
+	assert.Equal(t, "gpt-4o,gpt-4o-mini", updated.ModelLimits)
+
+	var untouched model.Token
+	require.NoError(t, db.First(&untouched, foreign.Id).Error)
+	assert.Equal(t, foreign.Status, untouched.Status)
+	assert.Equal(t, foreign.Group, untouched.Group)
+
+	duplicateCtx, duplicateRecorder := newAuthenticatedContext(
+		t,
+		http.MethodPost,
+		"/api/token/batch/update",
+		map[string]any{"ids": []int{owned.Id, owned.Id}, "status": common.TokenStatusDisabled},
+		1,
+	)
+	UpdateTokenBatch(duplicateCtx)
+	assert.False(t, decodeAPIResponse(t, duplicateRecorder).Success)
+}

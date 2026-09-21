@@ -818,3 +818,97 @@ func TestUpdateUserWithQuotaRollsBackQuotaWhenProfileFails(t *testing.T) {
 	assert.Equal(t, target.DisplayName, updated.DisplayName)
 	assert.Equal(t, 1000, updated.Quota)
 }
+
+func TestBatchUpdateUsersAppliesAtomicPatchAndProtectsRoot(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	now := time.Now().Unix()
+	targets := []model.User{
+		{
+			Username: "batch-user-one", Password: "password",
+			Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+			Group: "default", Quota: 1000, AuthVersion: 1, AffCode: "batch-aff-one",
+		},
+		{
+			Username: "batch-user-two", Password: "password",
+			Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+			Group: "default", Quota: 1000, AuthVersion: 1, AffCode: "batch-aff-two",
+		},
+	}
+	require.NoError(t, db.Create(&targets).Error)
+	for index, target := range targets {
+		require.NoError(t, db.Create(&model.UserSession{
+			SID: "batch-user-session-" + fmt.Sprint(index), UserID: target.Id,
+			Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive,
+			RefreshHash: "batch-refresh-" + fmt.Sprint(index), LoginMethod: "password",
+			LastActiveAt: now, ExpiresAt: now + 3600,
+		}).Error)
+	}
+
+	body := map[string]any{
+		"ids":    []int{targets[0].Id, targets[1].Id},
+		"status": common.UserStatusDisabled,
+		"group":  "vip",
+		"quota_adjustment": map[string]any{
+			"mode": "add", "value": 250,
+		},
+	}
+	ctx, recorder := newAuthenticatedContext(
+		t,
+		http.MethodPost,
+		"/api/user/batch",
+		body,
+		9999,
+	)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Set("username", "batch-root")
+	BatchUpdateUsers(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	var result batchUpdateResult
+	require.NoError(t, common.Unmarshal(response.Data, &result))
+	require.Equal(t, 2, result.Updated)
+	require.Empty(t, result.Failed)
+
+	for _, target := range targets {
+		var updated model.User
+		require.NoError(t, db.First(&updated, target.Id).Error)
+		assert.Equal(t, common.UserStatusDisabled, updated.Status)
+		assert.Equal(t, "vip", updated.Group)
+		assert.Equal(t, 1250, updated.Quota)
+		assert.EqualValues(t, 2, updated.AuthVersion)
+
+		var session model.UserSession
+		require.NoError(t, db.First(&session, "user_id = ?", target.Id).Error)
+		assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+	}
+
+	root := model.User{
+		Username: "batch-root-protected", Password: "password",
+		Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+		Group: "default", AuthVersion: 1, AffCode: "batch-root-aff",
+	}
+	require.NoError(t, db.Create(&root).Error)
+	rootCtx, rootRecorder := newAuthenticatedContext(
+		t,
+		http.MethodPost,
+		"/api/user/batch",
+		map[string]any{"ids": []int{root.Id}, "status": common.UserStatusDisabled},
+		9999,
+	)
+	rootCtx.Set("role", common.RoleRootUser)
+	rootCtx.Set("username", "batch-root")
+	BatchUpdateUsers(rootCtx)
+
+	rootResponse := decodeAPIResponse(t, rootRecorder)
+	require.True(t, rootResponse.Success)
+	var rootResult batchUpdateResult
+	require.NoError(t, common.Unmarshal(rootResponse.Data, &rootResult))
+	assert.Zero(t, rootResult.Updated)
+	require.Len(t, rootResult.Failed, 1)
+	assert.Equal(t, "root_protected", rootResult.Failed[0].Message)
+
+	var unchangedRoot model.User
+	require.NoError(t, db.First(&unchangedRoot, root.Id).Error)
+	assert.Equal(t, common.UserStatusEnabled, unchangedRoot.Status)
+}

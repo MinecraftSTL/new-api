@@ -101,6 +101,27 @@ export interface TokenAutoGroupsConfig {
   max_count: number
 }
 
+export interface BatchUpdateFailure {
+  id: number
+  message?: string
+}
+
+export interface BatchUpdateResult {
+  updated: number
+  failed?: BatchUpdateFailure[]
+}
+
+export interface BatchUpdateApiKeysPayload {
+  ids: number[]
+  status?: number
+  remain_quota?: number
+  unlimited_quota?: boolean
+  group?: string
+  expired_time?: number
+  model_limits_enabled?: boolean
+  model_limits?: string
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

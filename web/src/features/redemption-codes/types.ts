@@ -79,6 +79,24 @@ export interface RedemptionFormData {
   status?: number // Only for status update
 }
 
+export interface BatchUpdateFailure {
+  id: number
+  message?: string
+}
+
+export interface BatchUpdateResult {
+  updated: number
+  failed?: BatchUpdateFailure[]
+}
+
+export interface BatchUpdateRedemptionsPayload {
+  ids: number[]
+  status?: number
+  name?: string
+  quota?: number
+  expired_time?: number
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================
