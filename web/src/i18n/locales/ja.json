@@ -6130,6 +6130,7 @@
     "Two-Step Verification": "2段階認証",
     "Type": "タイプ",
     "Type (common)": "タイプ（共通）",
+    "Type {{username}} to confirm": "{{username}} と入力して確認してください",
     "Type *": "タイプ *",
     "Type a command or search...": "コマンドまたは検索を入力...",
     "Type the confirmation text here": "確認テキストをここに入力",
