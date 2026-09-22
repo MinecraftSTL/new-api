@@ -217,3 +217,19 @@ func TestRequestPolicyRoutingDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenPinSameChannelAllowsRetry(t *testing.T) {
+	token := newPinRetryContext()
+	service.GetChannelConstraints(token).AddPin(dto.ChannelPin{
+		ChannelId: 1,
+		Source:    dto.PinSourceToken,
+		Rank:      dto.PinRankToken,
+		RetryMode: dto.PinRetrySameChannel,
+	})
+	openaiErr := types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError)
+	require.True(t, service.ShouldRetryRelayError(token, openaiErr, 1))
+	assert.Equal(t, "retry", service.DecideRelayRetry(token, openaiErr, 1).Action)
+
+	taskErr := &dto.TaskError{StatusCode: http.StatusInternalServerError}
+	require.Equal(t, "retry", decideTaskRetry(token, taskErr, 1).Action)
+}

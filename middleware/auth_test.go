@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -333,4 +334,25 @@ func TestApplyWebSocketSubprotocolAuthorizationReadsRepeatedHeaders(t *testing.T
 
 	assert.True(t, applyWebSocketSubprotocolAuthorization(header))
 	assert.Equal(t, "Bearer sk-later-field", header.Get("Authorization"))
+}
+
+func TestSetupContextForTokenUsesSameChannelRetryForSpecificChannel(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	user := &model.User{
+		Username: "specific-channel-admin",
+		Password: "password-placeholder",
+		Role:     common.RoleAdminUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	token := &model.Token{UserId: user.Id, Key: "sk-test", Name: "specific-channel"}
+
+	require.NoError(t, SetupContextForToken(c, token, token.Key, "123"))
+	pin, found, _ := service.GetChannelConstraints(c).ResolvedPin()
+	require.True(t, found)
+	assert.Equal(t, 123, pin.ChannelId)
+	assert.Equal(t, dto.PinSourceToken, pin.Source)
+	assert.Equal(t, dto.PinRetrySameChannel, pin.RetryMode)
 }

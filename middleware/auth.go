@@ -544,7 +544,7 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 				ChannelId: id,
 				Source:    dto.PinSourceToken,
 				Rank:      dto.PinRankToken,
-				RetryMode: dto.PinRetrySingleAttempt,
+				RetryMode: dto.PinRetrySameChannel,
 			})
 		} else {
 			c.Header("specific_channel_version", "701e3ae1dc3f7975556d354e0675168d004891c8")
