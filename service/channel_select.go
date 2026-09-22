@@ -244,18 +244,25 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 	remainingAttempts := common.RetryTimes - param.GetRetry() + 1
 	forcedChannelID := 0
-	if RequestPolicy(param.Ctx).SessionMode == "strict" && firstChannelID > 0 {
-		forcedChannelID = firstChannelID
+	preferredRepeatChannelID := 0
+	if firstChannelID > 0 {
+		switch RequestPolicy(param.Ctx).SessionMode {
+		case "strict":
+			forcedChannelID = firstChannelID
+		case "prefer":
+			preferredRepeatChannelID = firstChannelID
+		}
 	}
 	channel, selectedGroup, err := model.SelectSatisfiedChannel(model.ChannelSelectionOptions{
-		Groups:              groups,
-		ModelName:           param.ModelName,
-		AttemptedChannelIDs: attemptedChannelIDs,
-		Filters:             GetChannelConstraints(param.Ctx).Filters,
-		RemainingAttempts:   remainingAttempts,
-		CurrentGroup:        currentGroup,
-		LastChannelID:       lastChannelID,
-		ForcedChannelID:     forcedChannelID,
+		Groups:                   groups,
+		ModelName:                param.ModelName,
+		AttemptedChannelIDs:      attemptedChannelIDs,
+		Filters:                  GetChannelConstraints(param.Ctx).Filters,
+		RemainingAttempts:        remainingAttempts,
+		CurrentGroup:             currentGroup,
+		LastChannelID:            lastChannelID,
+		ForcedChannelID:          forcedChannelID,
+		PreferredRepeatChannelID: preferredRepeatChannelID,
 	})
 	if err != nil {
 		return nil, selectedGroup, err

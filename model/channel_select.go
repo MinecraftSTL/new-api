@@ -11,14 +11,15 @@ import (
 var ErrForcedChannelUnavailable = errors.New("forced channel is unavailable")
 
 type ChannelSelectionOptions struct {
-	Groups              []string
-	ForcedChannelID     int
-	ModelName           string
-	AttemptedChannelIDs map[int]struct{}
-	Filters             []dto.ChannelFilter
-	RemainingAttempts   int
-	CurrentGroup        string
-	LastChannelID       int
+	Groups                   []string
+	ForcedChannelID          int
+	PreferredRepeatChannelID int
+	ModelName                string
+	AttemptedChannelIDs      map[int]struct{}
+	Filters                  []dto.ChannelFilter
+	RemainingAttempts        int
+	CurrentGroup             string
+	LastChannelID            int
 }
 
 type channelSelectionCandidate struct {
@@ -46,18 +47,22 @@ func SelectSatisfiedChannel(options ChannelSelectionOptions) (*Channel, string, 
 	}
 
 	if options.ForcedChannelID > 0 {
-		for _, candidate := range candidates {
-			if candidate.channelID != options.ForcedChannelID {
-				continue
-			}
-			channel, err := CacheGetChannel(candidate.channelID)
-			return channel, candidate.group, err
+		selected, ok := selectChannelCandidateByID(candidates, options.ForcedChannelID)
+		if !ok {
+			return nil, fallbackGroup, ErrForcedChannelUnavailable
 		}
-		return nil, fallbackGroup, ErrForcedChannelUnavailable
+		channel, err := CacheGetChannel(selected.channelID)
+		return channel, selected.group, err
 	}
 
 	untriedCount := countUntriedChannelCandidates(candidates, options.AttemptedChannelIDs)
 	if options.RemainingAttempts > untriedCount {
+		if options.PreferredRepeatChannelID > 0 {
+			if selected, ok := selectChannelCandidateByID(candidates, options.PreferredRepeatChannelID); ok {
+				channel, err := CacheGetChannel(selected.channelID)
+				return channel, selected.group, err
+			}
+		}
 		if selected, ok := selectRepeatChannelCandidate(candidates, options.AttemptedChannelIDs, options.CurrentGroup, options.LastChannelID); ok {
 			channel, err := CacheGetChannel(selected.channelID)
 			return channel, selected.group, err
@@ -77,6 +82,15 @@ func loadChannelSelectionCandidates(groups []string, modelName string, filters [
 		return loadCachedChannelSelectionCandidates(groups, modelName, filters)
 	}
 	return loadDatabaseChannelSelectionCandidates(groups, modelName, filters)
+}
+
+func selectChannelCandidateByID(candidates []channelSelectionCandidate, channelID int) (channelSelectionCandidate, bool) {
+	for _, candidate := range candidates {
+		if candidate.channelID == channelID {
+			return candidate, true
+		}
+	}
+	return channelSelectionCandidate{}, false
 }
 
 func countUntriedChannelCandidates(candidates []channelSelectionCandidate, attemptedChannelIDs map[int]struct{}) int {
@@ -201,9 +215,6 @@ func selectRepeatChannelCandidate(candidates []channelSelectionCandidate, attemp
 	seen := make(map[int]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		if candidate.group != targetGroup || candidate.priority != targetPriority {
-			continue
-		}
-		if !channelWasAttempted(attemptedChannelIDs, candidate.channelID) {
 			continue
 		}
 		if _, duplicate := seen[candidate.channelID]; duplicate {
