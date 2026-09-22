@@ -26,7 +26,6 @@ const (
 	ginKeyChannelAffinityTTLSeconds = "channel_affinity_ttl_seconds"
 	ginKeyChannelAffinityMeta       = "channel_affinity_meta"
 	ginKeyChannelAffinityLogInfo    = "channel_affinity_log_info"
-	ginKeyChannelAffinitySkipRetry  = "channel_affinity_skip_retry_on_failure"
 
 	channelAffinityCacheNamespace           = "new-api:channel_affinity:v1"
 	channelAffinityUsageCacheStatsNamespace = "new-api:channel_affinity_usage_cache_stats:v1"
@@ -46,7 +45,6 @@ type channelAffinityMeta struct {
 	CacheKey       string
 	TTLSeconds     int
 	RuleName       string
-	SkipRetry      bool
 	ParamTemplate  map[string]any
 	KeySourceType  string
 	KeySourceKey   string
@@ -600,7 +598,6 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			CacheKey:       cacheKeyFull,
 			TTLSeconds:     ttlSeconds,
 			RuleName:       rule.Name,
-			SkipRetry:      state.SessionMode == "strict",
 			ParamTemplate:  cloneStringAnyMap(rule.ParamOverrideTemplate),
 			KeySourceType:  strings.TrimSpace(usedSource.Type),
 			KeySourceKey:   strings.TrimSpace(usedSource.Key),
@@ -630,24 +627,6 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 	return 0, false
 }
 
-func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
-	if c == nil {
-		return false
-	}
-	v, ok := c.Get(ginKeyChannelAffinitySkipRetry)
-	if ok {
-		b, ok := v.(bool)
-		if ok {
-			return b
-		}
-	}
-	meta, ok := getChannelAffinityMeta(c)
-	if !ok {
-		return false
-	}
-	return meta.SkipRetry
-}
-
 func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -663,7 +642,6 @@ func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 		common.SysError(fmt.Sprintf("channel affinity cache delete current failed: err=%v", err))
 		return false
 	}
-	c.Set(ginKeyChannelAffinitySkipRetry, false)
 	for _, ok := range deleted {
 		if ok {
 			return true
@@ -688,7 +666,6 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 	if !ok {
 		return
 	}
-	c.Set(ginKeyChannelAffinitySkipRetry, meta.SkipRetry)
 	info := map[string]any{
 		"reason":         meta.RuleName,
 		"rule_name":      meta.RuleName,

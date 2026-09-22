@@ -352,3 +352,34 @@ func TestSelectSatisfiedChannelReactsToCandidateGrowth(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectSatisfiedChannelHonorsForcedChannel(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 901, "default", "forced-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 902, "default", "forced-model", 50, 100, true)
+			InitChannelCache()
+
+			options := ChannelSelectionOptions{
+				Groups:            []string{"default"},
+				ModelName:         "forced-model",
+				RemainingAttempts: 1,
+				CurrentGroup:      "default",
+				ForcedChannelID:   902,
+			}
+			channel, group, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 902, channel.Id)
+			assert.Equal(t, "default", group)
+
+			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 902).Update("status", common.ChannelStatusManuallyDisabled).Error)
+			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 902).Update("enabled", false).Error)
+			InitChannelCache()
+			channel, _, err = SelectSatisfiedChannel(options)
+			require.ErrorIs(t, err, ErrForcedChannelUnavailable)
+			assert.Nil(t, channel)
+		})
+	}
+}

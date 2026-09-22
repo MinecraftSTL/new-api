@@ -1,12 +1,18 @@
 package model
 
 import (
+	"errors"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 )
 
+// ErrForcedChannelUnavailable indicates that the required channel is not eligible for this request.
+var ErrForcedChannelUnavailable = errors.New("forced channel is unavailable")
+
 type ChannelSelectionOptions struct {
 	Groups              []string
+	ForcedChannelID     int
 	ModelName           string
 	AttemptedChannelIDs map[int]struct{}
 	Filters             []dto.ChannelFilter
@@ -37,6 +43,17 @@ func SelectSatisfiedChannel(options ChannelSelectionOptions) (*Channel, string, 
 	}
 	if len(candidates) <= 0 {
 		return nil, fallbackGroup, nil
+	}
+
+	if options.ForcedChannelID > 0 {
+		for _, candidate := range candidates {
+			if candidate.channelID != options.ForcedChannelID {
+				continue
+			}
+			channel, err := CacheGetChannel(candidate.channelID)
+			return channel, candidate.group, err
+		}
+		return nil, fallbackGroup, ErrForcedChannelUnavailable
 	}
 
 	untriedCount := countUntriedChannelCandidates(candidates, options.AttemptedChannelIDs)
