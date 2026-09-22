@@ -112,7 +112,7 @@ describe('API key group table cell', () => {
         background,
         color,
         border,
-        'rounded-full',
+        'rounded-4xl',
         'tabular-nums',
         'h-5',
         'min-w-12'
@@ -129,7 +129,7 @@ describe('API key group table cell', () => {
     expect(screen.getByText('Inherited')).toBeInTheDocument()
     expect(screen.getByText('Inherited').parentElement).toHaveClass(
       'border-muted-foreground/30',
-      'rounded-full'
+      'rounded-4xl'
     )
     expect(screen.queryByText('1x')).not.toBeInTheDocument()
     await userEvent.tab()
