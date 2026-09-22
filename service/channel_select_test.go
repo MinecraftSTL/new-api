@@ -324,3 +324,67 @@ func TestSharedType61IdentityFilterContainsAllCandidateKeys(t *testing.T) {
 	assert.Equal(t, []string{"alpha", "beta"}, filters[0].TaskPluginKeys)
 	assert.Empty(t, filters[0].TaskPluginChannelTypes)
 }
+
+func TestCacheGetRandomSatisfiedChannelForcesStrictSessionChannel(t *testing.T) {
+	resetAutoGroupChannelSelectionTest(t)
+	createAutoGroupChannelSelectionTestChannel(t, 501, "default", 100)
+	createAutoGroupChannelSelectionTestChannel(t, 502, "default", 50)
+	model.InitChannelCache()
+
+	retry := 1
+	ctx := newAutoGroupChannelSelectionContext(false, "501")
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "default")
+	RequestPolicy(ctx).SessionMode = "strict"
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "default",
+		ModelName:   "auto-model",
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 501, channel.Id)
+	assert.Equal(t, "default", selectedGroup)
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 501).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", 501).Update("enabled", false).Error)
+	model.InitChannelCache()
+	channel, _, err = CacheGetRandomSatisfiedChannel(param)
+	require.ErrorIs(t, err, model.ErrForcedChannelUnavailable)
+	assert.Nil(t, channel)
+}
+
+func TestCacheGetRandomSatisfiedChannelPrefersOriginalDuringRepeat(t *testing.T) {
+	resetAutoGroupChannelSelectionTest(t)
+	common.RetryTimes = 2
+	createAutoGroupChannelSelectionTestChannel(t, 601, "default", 100)
+	createAutoGroupChannelSelectionTestChannel(t, 602, "default", 100)
+	model.InitChannelCache()
+
+	retry := 1
+	ctx := newAutoGroupChannelSelectionContext(false, "601")
+	common.SetContextKey(ctx, constant.ContextKeyAutoGroup, "default")
+	RequestPolicy(ctx).SessionMode = "prefer"
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "default",
+		ModelName:   "auto-model",
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 601, channel.Id)
+	assert.Equal(t, "default", selectedGroup)
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 601).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	require.NoError(t, model.DB.Model(&model.Ability{}).Where("channel_id = ?", 601).Update("enabled", false).Error)
+	model.InitChannelCache()
+	channel, _, err = CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	assert.Equal(t, 602, channel.Id)
+}

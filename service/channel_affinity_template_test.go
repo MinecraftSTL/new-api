@@ -122,66 +122,6 @@ func TestApplyChannelAffinityOverrideTemplate_MergeOperations(t *testing.T) {
 	require.Equal(t, "trim_prefix", secondOp["mode"])
 }
 
-func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
-	tests := []struct {
-		name string
-		ctx  func() *gin.Context
-		want bool
-	}{
-		{
-			name: "nil context",
-			ctx: func() *gin.Context {
-				return nil
-			},
-			want: false,
-		},
-		{
-			name: "explicit skip retry flag in context",
-			ctx: func() *gin.Context {
-				ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
-					RuleName:   "rule-explicit-flag",
-					SkipRetry:  false,
-					UsingGroup: "default",
-					ModelName:  "gpt-5",
-				})
-				ctx.Set(ginKeyChannelAffinitySkipRetry, true)
-				return ctx
-			},
-			want: true,
-		},
-		{
-			name: "fallback to matched rule meta",
-			ctx: func() *gin.Context {
-				return buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
-					RuleName:   "rule-skip-retry",
-					SkipRetry:  true,
-					UsingGroup: "default",
-					ModelName:  "gpt-5",
-				})
-			},
-			want: true,
-		},
-		{
-			name: "no flag and no skip retry meta",
-			ctx: func() *gin.Context {
-				return buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
-					RuleName:   "rule-no-skip-retry",
-					SkipRetry:  false,
-					UsingGroup: "default",
-					ModelName:  "gpt-5",
-				})
-			},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, ShouldSkipRetryAfterChannelAffinityFailure(tt.ctx()))
-		})
-	}
-}
-
 func TestExtractChannelAffinityValue_RequestHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
@@ -257,16 +197,12 @@ func TestClearCurrentChannelAffinityCache(t *testing.T) {
 		CacheKey:   cacheKeyFull,
 		TTLSeconds: 60,
 		RuleName:   "codex cli trace",
-		SkipRetry:  true,
 	})
-	require.True(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
-
 	deleted := ClearCurrentChannelAffinityCache(ctx)
 	require.True(t, deleted)
 	_, found, err := cache.Get(cacheKeySuffix)
 	require.NoError(t, err)
 	require.False(t, found)
-	require.False(t, ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 }
 
 func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
@@ -433,13 +369,8 @@ func TestSessionRulesInheritOrOverrideGlobalDefault(t *testing.T) {
 				}
 				assert.Equal(t, expected, state.SessionMode)
 				assert.Equal(t, source, state.SessionModeSource)
-				assert.Equal(t, expected == "strict", ShouldSkipRetryAfterChannelAffinityFailure(ctx))
 				decision := DecideRelayRetry(ctx, types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests), 2)
-				if expected == "strict" {
-					assert.Equal(t, PolicyDecision{Action: "stop", Reason: "strict_session", Source: source}, decision)
-				} else {
-					assert.Equal(t, "retry", decision.Action)
-				}
+				assert.Equal(t, "retry", decision.Action)
 				events := state.Events()
 				require.Len(t, events, 1)
 				assert.Equal(t, PolicyDecision{Action: "match", Reason: "session_rule_matched", Source: "session_rule"}, events[0].Decision)

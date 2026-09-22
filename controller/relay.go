@@ -797,11 +797,6 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason = "request_completed"
 	case taskErr.NoRetry:
 		stop.Reason = "task_accepted"
-	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):
-		stop.Reason, stop.Source = "strict_session", "session_rule"
-		if source := service.RequestPolicy(c).SessionModeSource; source != "" {
-			stop.Source = source
-		}
 	case retryTimes <= 0:
 		stop.Reason, stop.Source = "attempt_budget_exhausted", "global"
 	case service.GetChannelConstraints(c).SuppressesRetry():

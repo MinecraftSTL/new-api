@@ -352,3 +352,102 @@ func TestSelectSatisfiedChannelReactsToCandidateGrowth(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectSatisfiedChannelHonorsForcedChannel(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 901, "default", "forced-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 902, "default", "forced-model", 50, 100, true)
+			InitChannelCache()
+
+			options := ChannelSelectionOptions{
+				Groups:            []string{"default"},
+				ModelName:         "forced-model",
+				RemainingAttempts: 1,
+				CurrentGroup:      "default",
+				ForcedChannelID:   902,
+			}
+			channel, group, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 902, channel.Id)
+			assert.Equal(t, "default", group)
+
+			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 902).Update("status", common.ChannelStatusManuallyDisabled).Error)
+			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 902).Update("enabled", false).Error)
+			InitChannelCache()
+			channel, _, err = SelectSatisfiedChannel(options)
+			require.ErrorIs(t, err, ErrForcedChannelUnavailable)
+			assert.Nil(t, channel)
+		})
+	}
+}
+
+func TestSelectSatisfiedChannelRepeatUsesAllCurrentPriorityCandidates(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 1001, "default", "repeat-all-model", 100, 0, true)
+			createChannelSelectionTestChannel(t, 1002, "default", "repeat-all-model", 100, 100, true)
+			createChannelSelectionTestChannel(t, 1003, "default", "repeat-all-model", 50, 100, true)
+			InitChannelCache()
+
+			attempted := map[int]struct{}{1001: {}}
+			options := ChannelSelectionOptions{
+				Groups:              []string{"default"},
+				ModelName:           "repeat-all-model",
+				AttemptedChannelIDs: attempted,
+				RemainingAttempts:   3,
+				CurrentGroup:        "default",
+				LastChannelID:       1001,
+			}
+			channel, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 1002, channel.Id, "repeat selection includes untried channels at the target priority")
+
+			attempted[channel.Id] = struct{}{}
+			options.LastChannelID = channel.Id
+			options.RemainingAttempts = 1
+			channel, _, err = SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 1003, channel.Id, "repeat attempts count toward the later distinct selection")
+		})
+	}
+}
+
+func TestSelectSatisfiedChannelPreferredRepeatUsesOriginalUntilUnavailable(t *testing.T) {
+	for _, memoryCacheEnabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("memory_cache_%t", memoryCacheEnabled), func(t *testing.T) {
+			resetChannelSelectionTest(t, memoryCacheEnabled)
+			createChannelSelectionTestChannel(t, 1101, "default", "preferred-repeat-model", 100, 0, true)
+			createChannelSelectionTestChannel(t, 1102, "default", "preferred-repeat-model", 100, 100, true)
+			InitChannelCache()
+
+			attempted := map[int]struct{}{1101: {}}
+			options := ChannelSelectionOptions{
+				Groups:                   []string{"default"},
+				ModelName:                "preferred-repeat-model",
+				AttemptedChannelIDs:      attempted,
+				RemainingAttempts:        2,
+				CurrentGroup:             "default",
+				LastChannelID:            1101,
+				PreferredRepeatChannelID: 1101,
+			}
+			channel, _, err := SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 1101, channel.Id)
+
+			require.NoError(t, DB.Model(&Channel{}).Where("id = ?", 1101).Update("status", common.ChannelStatusManuallyDisabled).Error)
+			require.NoError(t, DB.Model(&Ability{}).Where("channel_id = ?", 1101).Update("enabled", false).Error)
+			InitChannelCache()
+			channel, _, err = SelectSatisfiedChannel(options)
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			assert.Equal(t, 1102, channel.Id, "preferred repeat falls back to the full branch algorithm")
+		})
+	}
+}

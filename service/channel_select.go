@@ -228,25 +228,41 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	}
 
 	attemptedChannelIDs := make(map[int]struct{})
+	firstChannelID := 0
 	lastChannelID := 0
 	for _, channelIDText := range param.Ctx.GetStringSlice("use_channel") {
 		channelID, err := strconv.Atoi(channelIDText)
 		if err != nil || channelID <= 0 {
 			continue
 		}
+		if firstChannelID == 0 {
+			firstChannelID = channelID
+		}
 		attemptedChannelIDs[channelID] = struct{}{}
 		lastChannelID = channelID
 	}
 
 	remainingAttempts := common.RetryTimes - param.GetRetry() + 1
+	forcedChannelID := 0
+	preferredRepeatChannelID := 0
+	if firstChannelID > 0 {
+		switch RequestPolicy(param.Ctx).SessionMode {
+		case "strict":
+			forcedChannelID = firstChannelID
+		case "prefer":
+			preferredRepeatChannelID = firstChannelID
+		}
+	}
 	channel, selectedGroup, err := model.SelectSatisfiedChannel(model.ChannelSelectionOptions{
-		Groups:              groups,
-		ModelName:           param.ModelName,
-		AttemptedChannelIDs: attemptedChannelIDs,
-		Filters:             GetChannelConstraints(param.Ctx).Filters,
-		RemainingAttempts:   remainingAttempts,
-		CurrentGroup:        currentGroup,
-		LastChannelID:       lastChannelID,
+		Groups:                   groups,
+		ModelName:                param.ModelName,
+		AttemptedChannelIDs:      attemptedChannelIDs,
+		Filters:                  GetChannelConstraints(param.Ctx).Filters,
+		RemainingAttempts:        remainingAttempts,
+		CurrentGroup:             currentGroup,
+		LastChannelID:            lastChannelID,
+		ForcedChannelID:          forcedChannelID,
+		PreferredRepeatChannelID: preferredRepeatChannelID,
 	})
 	if err != nil {
 		return nil, selectedGroup, err
@@ -406,6 +422,9 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 	if channel == nil {
 		var err error
 		channel, selectGroup, err = CacheGetRandomSatisfiedChannel(retry)
+		if errors.Is(err, model.ErrForcedChannelUnavailable) {
+			return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: "strict_session_binding_unavailable"}
+		}
 		if err != nil {
 			showGroup := usingGroup
 			if usingGroup == "auto" {
