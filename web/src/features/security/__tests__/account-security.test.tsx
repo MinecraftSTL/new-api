@@ -26,8 +26,11 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useAuthStore } from '@/stores/auth-store'
@@ -59,6 +62,24 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
   useAuthStore.getState().auth.reset('idle')
+})
+
+it('labels account deletion confirmation as typing the username in Chinese', async () => {
+  const i18n = createInstance()
+  await i18n.init({
+    lng: 'zh',
+    fallbackLng: 'zh',
+    resources: { zh },
+    keySeparator: false,
+  })
+
+  render(
+    <I18nextProvider i18n={i18n}>
+      <DeleteAccountDialog open username='user' onOpenChange={vi.fn()} />
+    </I18nextProvider>
+  )
+
+  expect(screen.getByText('键入 user 以确认')).toBeVisible()
 })
 
 it('requires verification after username confirmation and cancels without deleting the account', async () => {

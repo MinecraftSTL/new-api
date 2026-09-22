@@ -98,7 +98,7 @@ export function DeleteAccountDialog(props: DeleteAccountDialogProps) {
         </Alert>
         <div className='space-y-2'>
           <Label htmlFor={confirmationId}>
-            {t('Type')} <strong>{props.username}</strong> {t('to confirm')}
+            {t('Type {{username}} to confirm', { username: props.username })}
           </Label>
           <Input
             id={confirmationId}

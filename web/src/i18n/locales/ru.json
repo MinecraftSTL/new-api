@@ -6130,6 +6130,7 @@
     "Two-Step Verification": "Двухэтапная проверка",
     "Type": "Тип",
     "Type (common)": "Тип (общий)",
+    "Type {{username}} to confirm": "Введите {{username}} для подтверждения",
     "Type *": "Тип *",
     "Type a command or search...": "Введите команду или поиск...",
     "Type the confirmation text here": "Введите текст подтверждения здесь",
