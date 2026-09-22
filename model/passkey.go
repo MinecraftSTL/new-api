@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -15,14 +17,22 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	MaxPasskeysPerUser  = 16
+	PasskeyNameMaxRunes = 64
+)
+
 var (
 	ErrPasskeyNotFound         = errors.New("passkey credential not found")
-	ErrFriendlyPasskeyNotFound = errors.New("Passkey 验证失败，请重试或联系管理员")
+	ErrPasskeyLimitReached     = errors.New("\u6bcf\u4e2a\u7528\u6237\u6700\u591a\u53ef\u4ee5\u7ed1\u5b9a 16 \u4e2a Passkey")
+	ErrPasskeyNameInvalid      = errors.New("Passkey \u540d\u79f0\u5fc5\u987b\u4e3a 1 \u5230 64 \u4e2a\u5b57\u7b26")
+	ErrPasskeyCredentialExists = errors.New("\u8be5 Passkey \u5df2\u7ed1\u5b9a")
 )
 
 type PasskeyCredential struct {
 	ID              int            `json:"id" gorm:"primaryKey"`
-	UserID          int            `json:"user_id" gorm:"uniqueIndex;not null"`
+	UserID          int            `json:"user_id" gorm:"index:idx_passkey_credentials_user_id;not null"`
+	Name            string         `json:"name" gorm:"type:varchar(64)"`
 	RPID            *string        `json:"rp_id,omitempty" gorm:"column:rp_id;type:varchar(253)"`
 	CredentialID    string         `json:"credential_id" gorm:"type:varchar(512);uniqueIndex;not null"` // base64 encoded
 	PublicKey       string         `json:"public_key" gorm:"type:text;not null"`                        // base64 encoded
@@ -40,6 +50,19 @@ type PasskeyCredential struct {
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `json:"-" gorm:"index"`
+}
+
+func NormalizePasskeyName(name string) (string, error) {
+	normalized := strings.TrimSpace(name)
+	if normalized == "" || utf8.RuneCountInString(normalized) > PasskeyNameMaxRunes {
+		return "", ErrPasskeyNameInvalid
+	}
+	for _, character := range normalized {
+		if unicode.IsControl(character) {
+			return "", ErrPasskeyNameInvalid
+		}
+	}
+	return normalized, nil
 }
 
 func (p *PasskeyCredential) TransportList() []protocol.AuthenticatorTransport {
@@ -122,50 +145,55 @@ func NewPasskeyCredentialFromWebAuthn(userID int, credential *webauthn.Credentia
 	return passkey
 }
 
-func GetPasskeyByUserID(userID int) (*PasskeyCredential, error) {
+func GetPasskeysByUserID(userID int) ([]*PasskeyCredential, error) {
 	if userID == 0 {
-		common.SysLog("GetPasskeyByUserID: empty user ID")
-		return nil, ErrFriendlyPasskeyNotFound
+		return nil, ErrPasskeyNotFound
+	}
+	var credentials []*PasskeyCredential
+	if err := DB.Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Order("id DESC").
+		Find(&credentials).Error; err != nil {
+		return nil, err
+	}
+	return credentials, nil
+}
+
+func GetPasskeyByIDForUser(userID, passkeyID int) (*PasskeyCredential, error) {
+	if userID <= 0 || passkeyID <= 0 {
+		return nil, ErrPasskeyNotFound
 	}
 	var credential PasskeyCredential
-	if err := DB.Where("user_id = ?", userID).First(&credential).Error; err != nil {
+	if err := DB.Where("user_id = ? AND id = ?", userID, passkeyID).First(&credential).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 未找到记录是正常情况（用户未绑定），返回 ErrPasskeyNotFound 而不记录日志
 			return nil, ErrPasskeyNotFound
 		}
-		// 只有真正的数据库错误才记录日志
-		common.SysLog(fmt.Sprintf("GetPasskeyByUserID: database error for user %d: %v", userID, err))
-		return nil, ErrFriendlyPasskeyNotFound
+		return nil, err
 	}
 	return &credential, nil
 }
 
 func GetPasskeyByCredentialID(credentialID []byte) (*PasskeyCredential, error) {
 	if len(credentialID) == 0 {
-		common.SysLog("GetPasskeyByCredentialID: empty credential ID")
-		return nil, ErrFriendlyPasskeyNotFound
+		return nil, ErrPasskeyNotFound
 	}
 
 	credIDStr := base64.StdEncoding.EncodeToString(credentialID)
 	var credential PasskeyCredential
 	if err := DB.Where("credential_id = ?", credIDStr).First(&credential).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			common.SysLog(fmt.Sprintf("GetPasskeyByCredentialID: passkey not found for credential ID length %d", len(credentialID)))
-			return nil, ErrFriendlyPasskeyNotFound
+			return nil, ErrPasskeyNotFound
 		}
-		common.SysLog(fmt.Sprintf("GetPasskeyByCredentialID: database error for credential ID: %v", err))
-		return nil, ErrFriendlyPasskeyNotFound
+		return nil, err
 	}
-
 	return &credential, nil
 }
 
 // UpdatePasskeyAssertionState persists only fields produced by a successful
-// assertion. Registration identity (credential ID, public key, AAGUID,
-// transports and attestation metadata) is immutable on this path.
+// assertion. Registration identity and the display name are immutable here.
 func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, lastUsedAt time.Time, rpID string) error {
 	if userID <= 0 || credential == nil || len(credential.ID) == 0 || lastUsedAt.IsZero() || rpID == "" {
-		return fmt.Errorf("Passkey 保存失败，请重试")
+		return fmt.Errorf("Passkey \u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5")
 	}
 	credentialID := base64.StdEncoding.EncodeToString(credential.ID)
 	passkeyOptionMutex.Lock()
@@ -181,7 +209,6 @@ func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, la
 			}
 			return err
 		}
-		// Compare in Go: the database collation may fold historical case.
 		if stored.RPID != nil && *stored.RPID != "" && *stored.RPID != rpID {
 			return system_setting.ErrPasskeyRPIDUnavailable
 		}
@@ -208,32 +235,38 @@ func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, la
 	})
 }
 
-func upsertPasskeyCredentialWithTx(tx *gorm.DB, credential *PasskeyCredential) error {
-	if err := tx.Unscoped().Where("user_id = ?", credential.UserID).Delete(&PasskeyCredential{}).Error; err != nil {
-		common.SysLog(fmt.Sprintf("UpsertPasskeyCredential: failed to delete existing credential for user %d: %v", credential.UserID, err))
-		return fmt.Errorf("Passkey 保存失败，请重试")
+func createPasskeyCredentialWithTx(tx *gorm.DB, credential *PasskeyCredential) error {
+	var existing PasskeyCredential
+	err := tx.Where("credential_id = ?", credential.CredentialID).First(&existing).Error
+	if err == nil {
+		return ErrPasskeyCredentialExists
 	}
-	if err := tx.Create(credential).Error; err != nil {
-		common.SysLog(fmt.Sprintf("UpsertPasskeyCredential: failed to create credential for user %d: %v", credential.UserID, err))
-		return fmt.Errorf("Passkey 保存失败，请重试")
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
 	}
-	return nil
+	return tx.Create(credential).Error
 }
 
-// UpsertPasskeyCredentialWithAuthVersion is reserved for enrollment changes;
-// assertion sign-count updates must use UpdatePasskeyAssertionState.
-func UpsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential) error {
-	return upsertPasskeyCredentialWithAuthVersion(credential, nil)
+// CreatePasskeyCredentialWithAuthVersion is reserved for account/authentication
+// changes. Assertion updates must use UpdatePasskeyAssertionState.
+func CreatePasskeyCredentialWithAuthVersion(credential *PasskeyCredential) error {
+	return createPasskeyCredentialWithAuthVersion(credential, nil)
 }
 
 func RegisterPasskeyForSession(identity AuthSessionIdentity, credential *PasskeyCredential) error {
-	return upsertPasskeyCredentialWithAuthVersion(credential, &identity)
+	return createPasskeyCredentialWithAuthVersion(credential, &identity)
 }
 
-func upsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential, identity *AuthSessionIdentity) error {
+func createPasskeyCredentialWithAuthVersion(credential *PasskeyCredential, identity *AuthSessionIdentity) error {
 	if credential == nil || credential.UserID <= 0 {
-		return fmt.Errorf("Passkey 保存失败，请重试")
+		return fmt.Errorf("Passkey \u4fdd\u5b58\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5")
 	}
+	normalizedName, err := NormalizePasskeyName(credential.Name)
+	if err != nil {
+		return err
+	}
+	credential.Name = normalizedName
+
 	passkeyOptionMutex.Lock()
 	defer passkeyOptionMutex.Unlock()
 	if err := DB.Transaction(func(tx *gorm.DB) error {
@@ -253,42 +286,99 @@ func upsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential, ident
 				return err
 			}
 		}
+		var lockedUser User
+		if err := lockForUpdate(tx).Select("id").First(&lockedUser, credential.UserID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrUserSessionInactive
+			}
+			return err
+		}
+		var count int64
+		if err := tx.Model(&PasskeyCredential{}).Where("user_id = ?", credential.UserID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= MaxPasskeysPerUser {
+			return ErrPasskeyLimitReached
+		}
 		if _, err := IncrementUserAuthVersionWithTx(tx, credential.UserID); err != nil {
 			return err
 		}
-		return upsertPasskeyCredentialWithTx(tx, credential)
+		return createPasskeyCredentialWithTx(tx, credential)
 	}); err != nil {
 		return err
 	}
 	return PublishUserAuthCache(credential.UserID)
 }
 
-func DeletePasskeyByUserIDWithAuthVersion(userID int) error {
-	return deletePasskeyWithAuthVersion(userID, nil)
-}
-
-func DeletePasskeyForSession(identity AuthSessionIdentity) error {
-	return deletePasskeyWithAuthVersion(identity.UserID, &identity)
-}
-
-func deletePasskeyWithAuthVersion(userID int, identity *AuthSessionIdentity) error {
-	if userID == 0 {
-		return fmt.Errorf("删除失败，请重试")
+func RenamePasskeyForSession(identity AuthSessionIdentity, passkeyID int, name string) (*PasskeyCredential, error) {
+	normalizedName, err := NormalizePasskeyName(name)
+	if err != nil {
+		return nil, err
 	}
+	if passkeyID <= 0 {
+		return nil, ErrPasskeyNotFound
+	}
+	var updated PasskeyCredential
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if identity != nil {
-			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
-				return err
-			}
+		if err := ValidateAuthSessionWithTx(tx, identity); err != nil {
+			return err
 		}
-		var credential PasskeyCredential
-		if err := lockForUpdate(tx).Where("user_id = ?", userID).First(&credential).Error; err != nil {
+		if err := lockForUpdate(tx).Where("user_id = ? AND id = ?", identity.UserID, passkeyID).First(&updated).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrPasskeyNotFound
 			}
 			return err
 		}
+		updated.Name = normalizedName
+		return tx.Model(&updated).Update("name", normalizedName).Error
+	}); err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func DeletePasskeysByUserIDWithAuthVersion(userID int) error {
+	if userID <= 0 {
+		return fmt.Errorf("\u5220\u9664\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5")
+	}
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		var credentials []PasskeyCredential
+		if err := lockForUpdate(tx).Where("user_id = ?", userID).Find(&credentials).Error; err != nil {
+			return err
+		}
+		if len(credentials) == 0 {
+			return ErrPasskeyNotFound
+		}
 		if _, err := IncrementUserAuthVersionWithTx(tx, userID); err != nil {
+			return err
+		}
+		result := tx.Unscoped().Where("user_id = ?", userID).Delete(&PasskeyCredential{})
+		if result.Error != nil {
+			return result.Error
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return PublishUserAuthCache(userID)
+}
+
+func DeletePasskeyForSession(identity AuthSessionIdentity, passkeyID int) error {
+	if identity.UserID <= 0 || passkeyID <= 0 {
+		return ErrPasskeyNotFound
+	}
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := ValidateAuthSessionWithTx(tx, identity); err != nil {
+			return err
+		}
+		var credential PasskeyCredential
+		if err := lockForUpdate(tx).Where("user_id = ? AND id = ?", identity.UserID, passkeyID).First(&credential).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPasskeyNotFound
+			}
+			return err
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, identity.UserID); err != nil {
 			return err
 		}
 		result := tx.Unscoped().Delete(&credential)
@@ -302,5 +392,32 @@ func deletePasskeyWithAuthVersion(userID int, identity *AuthSessionIdentity) err
 	}); err != nil {
 		return err
 	}
-	return PublishUserAuthCache(userID)
+	return PublishUserAuthCache(identity.UserID)
+}
+
+// GetPasskeyByUserID returns the most recently created credential. New code
+// should use GetPasskeysByUserID or GetPasskeyByIDForUser.
+func GetPasskeyByUserID(userID int) (*PasskeyCredential, error) {
+	credentials, err := GetPasskeysByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(credentials) == 0 {
+		return nil, ErrPasskeyNotFound
+	}
+	return credentials[0], nil
+}
+
+// UpsertPasskeyCredentialWithAuthVersion preserves the legacy single-credential
+// call shape. New authentication flows must use CreatePasskeyCredentialWithAuthVersion.
+func UpsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential) error {
+	if credential != nil && credential.Name == "" {
+		credential.Name = "Default"
+	}
+	return CreatePasskeyCredentialWithAuthVersion(credential)
+}
+
+// DeletePasskeyByUserIDWithAuthVersion preserves the administrator reset API.
+func DeletePasskeyByUserIDWithAuthVersion(userID int) error {
+	return DeletePasskeysByUserIDWithAuthVersion(userID)
 }

@@ -557,7 +557,7 @@ func TestPasskeyRegistrationRejectsUnavailableRequestOrigin(t *testing.T) {
 	settings.LegacyRPIDs = "example.com"
 	settings.Origins = "https://example.com,https://www.example.com"
 	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: "passkey.register"}, "password")
-	response := securityEnrollmentRequest(http.MethodPost, "/api/user/passkey/register/begin", "", proof, identity, func(c *gin.Context) {
+	response := securityEnrollmentRequest(http.MethodPost, "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, func(c *gin.Context) {
 		c.Request.Header.Set("Origin", "https://example.com")
 		PasskeyRegisterBegin(c)
 	})
@@ -615,7 +615,7 @@ func TestPasskeyRPIDRotationKeepsInFlightRegistration(t *testing.T) {
 	setupPasskeyDomainOptions(t)
 	system_setting.GetPasskeySettings().Origins = "https://example.com,https://www.example.com"
 	proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: "passkey.register"}, "password")
-	begin := decodePasskeyDomainBegin(t, securityEnrollmentRequest(http.MethodPost, "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin))
+	begin := decodePasskeyDomainBegin(t, securityEnrollmentRequest(http.MethodPost, "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin))
 	assert.Equal(t, "example.com", begin.Options.PublicKey.RP.ID)
 	require.NoError(t, model.UpdateOption("passkey.rp_id", "www.example.com"))
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -824,3 +824,20 @@ type passkeyCredentialBeforeRPID struct {
 }
 
 func (passkeyCredentialBeforeRPID) TableName() string { return "passkey_credentials" }
+
+func TestBuildLoginWebAuthnForCredentialsIncludesAllMatchingCredentials(t *testing.T) {
+	_, _ = setupSecurityEnrollmentTest(t)
+	rpID := "example.com"
+	otherRPID := "legacy.example.com"
+	credentials := []*model.PasskeyCredential{
+		{RPID: &rpID},
+		{RPID: &rpID},
+		{RPID: &otherRPID},
+	}
+	request := httptest.NewRequest(http.MethodPost, "https://example.com/api/user/passkey/verify/begin", nil)
+	wa, available, matched, err := passkeysvc.BuildLoginWebAuthnForCredentials(request, "", credentials)
+	require.NoError(t, err)
+	assert.Len(t, matched, 2)
+	assert.Equal(t, "example.com", wa.Config.RPID)
+	assert.Contains(t, available, "example.com")
+}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -133,6 +134,58 @@ func BuildLoginWebAuthn(r *http.Request, hint, credentialRPID string) (*webauthn
 	}
 	wa, err := BuildWebAuthnForRPID(r, selected)
 	return wa, available, err
+}
+
+// BuildLoginWebAuthnForCredentials restricts a known user's login options to
+// credentials bound to an origin-compatible RP ID.
+func BuildLoginWebAuthnForCredentials(r *http.Request, hint string, credentials []*model.PasskeyCredential) (*webauthn.WebAuthn, []string, []*model.PasskeyCredential, error) {
+	settings := system_setting.PasskeySettingsSnapshot()
+	origins, err := resolveOrigins(r, &settings)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	primary, err := resolveRPID(r, &settings, origins)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	configured := append([]string{primary}, settings.RelyingPartyIDs()...)
+	available := []string{}
+	matches := make(map[string][]*model.PasskeyCredential)
+	for _, id := range configured {
+		allowedOrigins := originsForRPID(origins, id)
+		if len(allowedOrigins) == 0 || (r.Header.Get("Origin") != "" && !protocol.IsOriginInHaystack(r.Header.Get("Origin"), allowedOrigins)) {
+			continue
+		}
+		matched := make([]*model.PasskeyCredential, 0, len(credentials))
+		for _, credential := range credentials {
+			if credential == nil || (credential.RPID != nil && *credential.RPID != "" && *credential.RPID != id) {
+				continue
+			}
+			matched = append(matched, credential)
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		if !slices.Contains(available, id) {
+			available = append(available, id)
+		}
+		matches[id] = matched
+	}
+	if len(available) == 0 {
+		return nil, nil, nil, ErrRPIDUnavailable
+	}
+	selected := hint
+	if selected == "" {
+		selected = primary
+	}
+	if !slices.Contains(available, selected) {
+		return nil, nil, nil, ErrRPIDUnavailable
+	}
+	wa, err := BuildWebAuthnForRPID(r, selected)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return wa, available, matches[selected], nil
 }
 
 func originsForRPID(origins []string, rpID string) []string {

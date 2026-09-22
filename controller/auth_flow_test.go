@@ -513,7 +513,7 @@ func TestSecurityLoginRegisteredPasskeyRequiresUserVerification(t *testing.T) {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			require.NoError(t, err)
 			proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasskeyRegister}, service.VerificationMethodPassword)
-			response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin)
+			response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin)
 			var result struct {
 				Success bool `json:"success"`
 				Data    struct {
