@@ -46,10 +46,14 @@ export type VerificationOperation =
       context: { provider: string; email?: string; code?: string }
     }
   | { scope: 'account.binding.unbind'; context: { provider_id: number } }
+  | { scope: 'passkey.delete'; context: { passkey_id: number } }
   | {
       scope: Exclude<
         SecurityProofScope,
-        'channel.key.read' | 'account.binding.bind' | 'account.binding.unbind'
+        | 'channel.key.read'
+        | 'account.binding.bind'
+        | 'account.binding.unbind'
+        | 'passkey.delete'
       >
       context?: Record<string, never>
     }

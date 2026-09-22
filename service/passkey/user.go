@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 package passkey
 
 import (
@@ -11,12 +29,12 @@ import (
 )
 
 type WebAuthnUser struct {
-	user       *model.User
-	credential *model.PasskeyCredential
+	user        *model.User
+	credentials []*model.PasskeyCredential
 }
 
-func NewWebAuthnUser(user *model.User, credential *model.PasskeyCredential) *WebAuthnUser {
-	return &WebAuthnUser{user: user, credential: credential}
+func NewWebAuthnUser(user *model.User, credentials ...*model.PasskeyCredential) *WebAuthnUser {
+	return &WebAuthnUser{user: user, credentials: credentials}
 }
 
 func (u *WebAuthnUser) WebAuthnID() []byte {
@@ -49,11 +67,17 @@ func (u *WebAuthnUser) WebAuthnDisplayName() string {
 }
 
 func (u *WebAuthnUser) WebAuthnCredentials() []webauthn.Credential {
-	if u == nil || u.credential == nil {
+	if u == nil || len(u.credentials) == 0 {
 		return nil
 	}
-	cred := u.credential.ToWebAuthnCredential()
-	return []webauthn.Credential{cred}
+	credentials := make([]webauthn.Credential, 0, len(u.credentials))
+	for _, credential := range u.credentials {
+		if credential == nil {
+			continue
+		}
+		credentials = append(credentials, credential.ToWebAuthnCredential())
+	}
+	return credentials
 }
 
 func (u *WebAuthnUser) ModelUser() *model.User {
@@ -64,8 +88,8 @@ func (u *WebAuthnUser) ModelUser() *model.User {
 }
 
 func (u *WebAuthnUser) PasskeyCredential() *model.PasskeyCredential {
-	if u == nil {
+	if u == nil || len(u.credentials) == 0 {
 		return nil
 	}
-	return u.credential
+	return u.credentials[0]
 }

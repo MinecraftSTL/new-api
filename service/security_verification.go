@@ -56,6 +56,10 @@ type ChannelKeyReadContext struct {
 	ChannelID int `json:"channel_id"`
 }
 
+type PasskeyDeleteContext struct {
+	PasskeyID int `json:"passkey_id"`
+}
+
 type AccountBindingContext struct {
 	Provider string `json:"provider"`
 	Email    string `json:"email,omitempty"`
@@ -117,7 +121,13 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
 		normalized = context
-	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
+	case VerificationScopePasskeyDelete:
+		var context PasskeyDeleteContext
+		if len(fields) != 1 || common.Unmarshal(fields["passkey_id"], &context.PasskeyID) != nil || context.PasskeyID <= 0 {
+			return VerificationBinding{}, ErrVerificationContextInvalid
+		}
+		normalized = context
+	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenRevoke,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:

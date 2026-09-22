@@ -1487,7 +1487,7 @@
     },
     "/api/user/passkey": {
       "get": {
-        "summary": "获取Passkey状态",
+        "summary": "获取Passkey列表",
         "deprecated": false,
         "description": "🔐 需要登录（User权限）",
         "tags": [
@@ -1508,15 +1508,76 @@
             "Combination1243": []
           }
         ]
-      },
-      "delete": {
-        "summary": "删除Passkey",
+      }
+    },
+    "/api/user/passkey/{id}": {
+      "patch": {
+        "summary": "重命名Passkey",
         "deprecated": false,
         "description": "🔐 需要登录（User权限）",
         "tags": [
           "用户管理"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除指定的Passkey",
+        "deprecated": false,
+        "description": "🔐 需要登录（User权限）",
+        "tags": [
+          "用户管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "成功",
@@ -1542,6 +1603,24 @@
           "用户管理"
         ],
         "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "成功",

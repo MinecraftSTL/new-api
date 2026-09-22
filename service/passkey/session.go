@@ -23,6 +23,7 @@ type FlowSecurity struct {
 	Scope          string                       `json:"scope"`
 	ContextHash    string                       `json:"context_hash"`
 	Authorization  *model.AuthFlowAuthorization `json:"authorization,omitempty"`
+	PasskeyName    string                       `json:"passkey_name,omitempty"`
 	LoginFlowID    int64                        `json:"login_flow_id,omitempty"`
 	LoginExpiresAt int64                        `json:"login_expires_at,omitempty"`
 }
@@ -38,7 +39,7 @@ func CreateSessionDataFlow(purpose string, security FlowSecurity, data *webauthn
 	} else if purpose != model.AuthFlowPurposePasskeyLogin && (security.UserID <= 0 || security.SessionID == "" || security.Scope == "" || security.ContextHash == "" || security.UserAuthVersion <= 0 || security.SessionVersion <= 0) {
 		return "", 0, model.ErrAuthFlowInvalid
 	}
-	if purpose == model.AuthFlowPurposePasskeyRegister && (security.Authorization == nil || security.Authorization.ProofID <= 0 || security.Authorization.AuthSessionIdentity != security.AuthSessionIdentity) {
+	if purpose == model.AuthFlowPurposePasskeyRegister && (security.Authorization == nil || security.Authorization.ProofID <= 0 || security.Authorization.AuthSessionIdentity != security.AuthSessionIdentity || security.PasskeyName == "") {
 		return "", 0, model.ErrAuthFlowInvalid
 	}
 	payload, err := common.Marshal(flowPayload{SessionData: *data, Security: security})

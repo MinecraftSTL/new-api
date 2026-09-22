@@ -35,15 +35,20 @@ export async function getPasskeyStatus(): Promise<ApiResponse<PasskeyStatus>> {
 }
 
 export function beginPasskeyRegistration(
+  name: string,
   proofToken: string,
   signal?: AbortSignal
 ): Promise<PasskeyOptionsPayload> {
   return authResult(
-    api.post('/api/user/passkey/register/begin', undefined, {
-      ...authRequestOptions,
-      headers: proofHeaders(proofToken),
-      signal,
-    })
+    api.post(
+      '/api/user/passkey/register/begin',
+      { name },
+      {
+        ...authRequestOptions,
+        headers: proofHeaders(proofToken),
+        signal,
+      }
+    )
   )
 }
 
@@ -66,12 +71,30 @@ export function finishPasskeyRegistration(
   )
 }
 
+export function renamePasskey(
+  passkeyId: number,
+  name: string,
+  signal?: AbortSignal
+): Promise<{ id: number; name: string }> {
+  return authResult(
+    api.patch(
+      `/api/user/passkey/${passkeyId}`,
+      { name },
+      {
+        ...authRequestOptions,
+        signal,
+      }
+    )
+  )
+}
+
 export function deletePasskey(
+  passkeyId: number,
   proofToken: string,
   signal?: AbortSignal
 ): Promise<unknown> {
   return authResult(
-    api.delete('/api/user/passkey', {
+    api.delete(`/api/user/passkey/${passkeyId}`, {
       ...authRequestOptions,
       headers: proofHeaders(proofToken),
       acceptAuthRotation: true,

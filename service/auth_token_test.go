@@ -137,7 +137,7 @@ func TestSecurityProofBindsIdentityAndOperation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2fa", claims.Method)
 
-	wrongScope, err := BindVerificationOperation(VerificationOperation{Scope: "passkey.delete"})
+	wrongScope, err := BindVerificationOperation(VerificationOperation{Scope: "passkey.delete", Context: []byte(`{"passkey_id":123}`)})
 	require.NoError(t, err)
 	_, err = verifySecurityProof(proof, identity, wrongScope)
 	assert.ErrorIs(t, err, ErrProofScope)

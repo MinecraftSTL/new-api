@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -337,4 +341,189 @@ func assertUserAuthVersion(t *testing.T, userID int, expected int64) {
 	var version int64
 	require.NoError(t, DB.Model(&User{}).Where("id = ?", userID).Select("auth_version").Scan(&version).Error)
 	assert.Equal(t, expected, version)
+}
+
+func TestPasskeyMultiCredentialLifecycle(t *testing.T) {
+	truncateTables(t)
+
+	user := User{Username: "multi-passkey-user", Password: "password", AffCode: "multi-passkey-aff", Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
+	require.NoError(t, DB.Create(&user).Error)
+	for i := range MaxPasskeysPerUser {
+		credential := &PasskeyCredential{
+			UserID:       user.Id,
+			Name:         "Duplicate",
+			CredentialID: base64.StdEncoding.EncodeToString([]byte{byte(i + 1)}),
+			PublicKey:    "public-key",
+		}
+		require.NoError(t, CreatePasskeyCredentialWithAuthVersion(credential))
+	}
+	assertUserAuthVersion(t, user.Id, 17)
+
+	credentials, err := GetPasskeysByUserID(user.Id)
+	require.NoError(t, err)
+	require.Len(t, credentials, MaxPasskeysPerUser)
+
+	tooMany := &PasskeyCredential{UserID: user.Id, Name: "Too many", CredentialID: base64.StdEncoding.EncodeToString([]byte("too-many")), PublicKey: "public-key"}
+	require.ErrorIs(t, CreatePasskeyCredentialWithAuthVersion(tooMany), ErrPasskeyLimitReached)
+
+	require.NoError(t, DB.First(&user, user.Id).Error)
+	session := UserSession{SID: "multi-passkey-session", UserID: user.Id, Version: 1, UserAuthVersion: user.AuthVersion, Status: UserSessionStatusActive, ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, DB.Create(&session).Error)
+	identity := AuthSessionIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: user.AuthVersion, SessionVersion: session.Version}
+
+	renamed, err := RenamePasskeyForSession(identity, credentials[0].ID, "  Shared name  ")
+	require.NoError(t, err)
+	assert.Equal(t, "Shared name", renamed.Name)
+	assertUserAuthVersion(t, user.Id, 17)
+
+	otherUser := User{Username: "other-multi-passkey-user", Password: "password", AffCode: "other-passkey-aff", Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
+	require.NoError(t, DB.Create(&otherUser).Error)
+	otherCredential := &PasskeyCredential{UserID: otherUser.Id, Name: "Other", CredentialID: base64.StdEncoding.EncodeToString([]byte("other-credential")), PublicKey: "public-key"}
+	require.NoError(t, DB.Create(otherCredential).Error)
+	_, err = RenamePasskeyForSession(identity, otherCredential.ID, "not allowed")
+	require.ErrorIs(t, err, ErrPasskeyNotFound)
+
+	require.NoError(t, DeletePasskeyForSession(identity, credentials[0].ID))
+	assertUserAuthVersion(t, user.Id, 18)
+	remaining, err := GetPasskeysByUserID(user.Id)
+	require.NoError(t, err)
+	require.Len(t, remaining, MaxPasskeysPerUser-1)
+
+	lastUser := User{Username: "last-passkey-user", Password: "password", AffCode: "last-passkey-aff", Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
+	require.NoError(t, DB.Create(&lastUser).Error)
+	lastCredential := &PasskeyCredential{UserID: lastUser.Id, Name: "Only", CredentialID: base64.StdEncoding.EncodeToString([]byte("last-credential")), PublicKey: "public-key"}
+	require.NoError(t, CreatePasskeyCredentialWithAuthVersion(lastCredential))
+	require.NoError(t, DB.First(&lastUser, lastUser.Id).Error)
+	lastSession := UserSession{SID: "last-passkey-session", UserID: lastUser.Id, Version: 1, UserAuthVersion: lastUser.AuthVersion, Status: UserSessionStatusActive, ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, DB.Create(&lastSession).Error)
+	lastIdentity := AuthSessionIdentity{UserID: lastUser.Id, SessionID: lastSession.SID, UserAuthVersion: lastUser.AuthVersion, SessionVersion: lastSession.Version}
+	require.NoError(t, DeletePasskeyForSession(lastIdentity, lastCredential.ID))
+	lastCredentials, err := GetPasskeysByUserID(lastUser.Id)
+	require.NoError(t, err)
+	assert.Empty(t, lastCredentials)
+}
+
+func TestPasskeyMultiCredentialMigrationPreservesLegacyCredential(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Migrator().DropTable(&PasskeyCredential{}))
+	require.NoError(t, DB.Exec(`CREATE TABLE passkey_credentials (
+		id integer PRIMARY KEY,
+		user_id integer NOT NULL,
+		rp_id varchar(253),
+		credential_id varchar(512) NOT NULL,
+		public_key text NOT NULL,
+		attestation_type varchar(255),
+		aa_guid varchar(512),
+		sign_count integer DEFAULT 0,
+		clone_warning numeric,
+		user_present numeric,
+		user_verified numeric,
+		backup_eligible numeric,
+		backup_state numeric,
+		transports text,
+		attachment varchar(32),
+		last_used_at datetime,
+		created_at datetime,
+		updated_at datetime,
+		deleted_at datetime
+	)`).Error)
+	require.NoError(t, DB.Exec("CREATE UNIQUE INDEX idx_passkey_credentials_user_id ON passkey_credentials(user_id)").Error)
+	require.NoError(t, DB.Exec("CREATE UNIQUE INDEX idx_passkey_credentials_credential_id ON passkey_credentials(credential_id)").Error)
+	require.NoError(t, DB.Exec("INSERT INTO passkey_credentials (id, user_id, credential_id, public_key) VALUES (?, ?, ?, ?)", 1, 9, "legacy-credential", "key").Error)
+
+	runMigration := func() {
+		require.NoError(t, migratePasskeyMultiCredentials(DB))
+		require.NoError(t, DB.AutoMigrate(&PasskeyCredential{}))
+		require.NoError(t, backfillPasskeyNames(DB))
+	}
+	runMigration()
+
+	var migrated PasskeyCredential
+	require.NoError(t, DB.First(&migrated, 1).Error)
+	assert.Equal(t, "Default", migrated.Name)
+
+	second := &PasskeyCredential{UserID: 9, Name: "Second", CredentialID: "second-credential", PublicKey: "key"}
+	require.NoError(t, DB.Create(second).Error)
+	runMigration()
+
+	var renamed PasskeyCredential
+	require.NoError(t, DB.First(&renamed, second.ID).Error)
+	assert.Equal(t, "Second", renamed.Name)
+	assert.Error(t, DB.Create(&PasskeyCredential{UserID: 9, Name: "Duplicate credential", CredentialID: "legacy-credential", PublicKey: "key"}).Error, "legacy duplicate should fail")
+}
+
+type legacyPasskeyCredential struct {
+	ID              int     `gorm:"primaryKey"`
+	UserID          int     `gorm:"uniqueIndex:idx_passkey_credentials_user_id;not null"`
+	RPID            *string `gorm:"column:rp_id;type:varchar(253)"`
+	CredentialID    string  `gorm:"type:varchar(512);uniqueIndex;not null"`
+	PublicKey       string  `gorm:"type:text;not null"`
+	AttestationType string  `gorm:"type:varchar(255)"`
+	AAGUID          string  `gorm:"type:varchar(512)"`
+	SignCount       uint32  `gorm:"default:0"`
+	CloneWarning    bool
+	UserPresent     bool
+	UserVerified    bool
+	BackupEligible  bool
+	BackupState     bool
+	Transports      string `gorm:"type:text"`
+	Attachment      string `gorm:"type:varchar(32)"`
+	LastUsedAt      *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DeletedAt       gorm.DeletedAt `gorm:"index"`
+}
+
+func TestPasskeyMultiCredentialMigrationDialects(t *testing.T) {
+	dialect := strings.ToLower(strings.TrimSpace(os.Getenv("TEST_SECURITY_DIALECT")))
+	if dialect == "" || dialect == "sqlite" {
+		t.Skip("set TEST_SECURITY_DIALECT and the matching DSN to run")
+	}
+	dsn := os.Getenv("TEST_" + strings.ToUpper(dialect) + "_DSN")
+	require.NotEmpty(t, dsn, "dialect DSN must be set")
+	var dialector gorm.Dialector
+	switch dialect {
+	case "mysql":
+		dialector = mysql.Open(dsn)
+	case "postgres":
+		dialector = postgres.Open(dsn)
+	default:
+		t.Fatalf("unsupported dialect %q", dialect)
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = db.Migrator().DropTable("passkey_credentials")
+		_ = sqlDB.Close()
+	})
+	require.NoError(t, db.Migrator().DropTable("passkey_credentials"))
+	require.NoError(t, db.Table("passkey_credentials").AutoMigrate(&legacyPasskeyCredential{}))
+	rpID := "example.com"
+	require.NoError(t, db.Table("passkey_credentials").Create(&legacyPasskeyCredential{
+		UserID:       9,
+		RPID:         &rpID,
+		CredentialID: "legacy-credential",
+		PublicKey:    "key",
+	}).Error)
+
+	runMigration := func() {
+		require.NoError(t, migratePasskeyMultiCredentials(db))
+		require.NoError(t, db.AutoMigrate(&PasskeyCredential{}))
+		require.NoError(t, backfillPasskeyNames(db))
+	}
+	runMigration()
+
+	var migrated PasskeyCredential
+	require.NoError(t, db.Where("credential_id = ?", "legacy-credential").First(&migrated).Error)
+	assert.Equal(t, "Default", migrated.Name)
+
+	second := &PasskeyCredential{UserID: 9, Name: "Second", CredentialID: "second-credential", PublicKey: "key"}
+	require.NoError(t, db.Create(second).Error)
+	runMigration()
+	var renamed PasskeyCredential
+	require.NoError(t, db.First(&renamed, second.ID).Error)
+	assert.Equal(t, "Second", renamed.Name)
+	assert.Error(t, db.Create(&PasskeyCredential{UserID: 9, Name: "Duplicate", CredentialID: "legacy-credential", PublicKey: "key"}).Error)
 }

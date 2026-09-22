@@ -16,7 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { AlertTriangle, KeyRound, Loader2, ShieldAlert } from 'lucide-react'
+import {
+  AlertTriangle,
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plus,
+  ShieldAlert,
+  Trash2,
+} from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -31,7 +39,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -42,8 +49,21 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
-import { usePasskeyManagement } from '@/features/auth/passkey'
+import {
+  MAX_PASSKEYS_PER_USER,
+  type Passkey,
+  usePasskeyManagement,
+} from '@/features/auth/passkey'
 import {
   SecureVerificationDialog,
   useSecureVerification,
@@ -52,59 +72,99 @@ import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
 
+import { PasskeyNameDialog } from './passkey-name-dialog'
+
 interface PasskeyCardProps {
   loading: boolean
 }
 
+type NameDialogState =
+  | { mode: 'create' }
+  | { mode: 'rename'; passkey: Passkey }
+  | null
+
+function formatPasskeyDate(value?: string | null) {
+  return value && !Number.isNaN(Date.parse(value))
+    ? dayjs(value).format('LLL')
+    : null
+}
+
 export function PasskeyCard({ loading: pageLoading }: PasskeyCardProps) {
   const { t } = useTranslation()
-  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [nameDialog, setNameDialog] = useState<NameDialogState>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Passkey | null>(null)
   const {
-    status,
     statusError,
     fetchStatus,
     loading,
     registering,
-    removing,
+    renamingId,
+    removingId,
     supported,
     enabled,
-    lastUsed,
+    passkeys,
     register,
+    rename,
     remove,
   } = usePasskeyManagement()
-
   const verification = useSecureVerification()
 
-  const handleRegister = useCallback(async () => {
-    if (registering || removing || verification.isActive) return
-    const proof = await verification.requestVerification({
-      scope: 'passkey.register',
-    })
-    if (!proof) return
-    try {
-      await register(proof.proof_token)
-      toast.success(t('Passkey registered successfully'))
-    } catch (error) {
-      const failure = AuthOperationError.from(error)
-      if (failure.code !== 'AUTH_CANCELLED') handleServerError(failure)
-    }
-  }, [register, registering, removing, t, verification])
+  const handleRegister = useCallback(
+    async (name: string) => {
+      if (passkeys.length >= MAX_PASSKEYS_PER_USER) {
+        toast.error(
+          t('You can add up to {{count}} Passkeys.', {
+            count: MAX_PASSKEYS_PER_USER,
+          })
+        )
+        return
+      }
+      const proof = await verification.requestVerification({
+        scope: 'passkey.register',
+      })
+      if (!proof) return
+      try {
+        await register(name, proof.proof_token)
+        setNameDialog(null)
+        toast.success(t('Passkey registered successfully'))
+      } catch (error) {
+        const failure = AuthOperationError.from(error)
+        if (failure.code !== 'AUTH_CANCELLED') handleServerError(failure)
+      }
+    },
+    [passkeys.length, register, t, verification]
+  )
+
+  const handleRename = useCallback(
+    async (passkey: Passkey, name: string) => {
+      try {
+        await rename(passkey.id, name)
+        setNameDialog(null)
+        toast.success(t('Passkey renamed successfully'))
+      } catch (error) {
+        handleServerError(AuthOperationError.from(error))
+      }
+    },
+    [rename, t]
+  )
 
   const handleRemove = useCallback(async () => {
-    if (registering || removing || verification.isActive) return
-    setConfirmOpen(false)
+    if (!deleteTarget) return
+    const target = deleteTarget
     const proof = await verification.requestVerification({
       scope: 'passkey.delete',
+      context: { passkey_id: target.id },
     })
     if (!proof) return
     try {
-      await remove(proof.proof_token)
+      await remove(target.id, proof.proof_token)
+      setDeleteTarget(null)
       toast.success(t('Passkey removed successfully'))
     } catch (error) {
       const failure = AuthOperationError.from(error)
       if (failure.code !== 'AUTH_CANCELLED') handleServerError(failure)
     }
-  }, [registering, remove, removing, t, verification])
+  }, [deleteTarget, remove, t, verification])
 
   if (pageLoading || loading) {
     return (
@@ -134,30 +194,8 @@ export function PasskeyCard({ loading: pageLoading }: PasskeyCardProps) {
     )
   }
 
-  const formattedLastUsed =
-    lastUsed && !Number.isNaN(Date.parse(lastUsed))
-      ? dayjs(lastUsed).fromNow()
-      : t('Not used yet')
-
   const showUnsupportedNotice = !supported && !enabled
-  let backupStatus: {
-    label: string
-    variant: 'success' | 'warning' | 'neutral'
-  } | null = null
-
-  if (status?.backup_eligible !== undefined) {
-    backupStatus = {
-      label: t('No backup'),
-      variant: 'neutral',
-    }
-
-    if (status.backup_eligible) {
-      backupStatus = {
-        label: status.backup_state ? t('Backed up') : t('Not backed up'),
-        variant: status.backup_state ? 'success' : 'warning',
-      }
-    }
-  }
+  const limitReached = passkeys.length >= MAX_PASSKEYS_PER_USER
 
   return (
     <>
@@ -172,8 +210,8 @@ export function PasskeyCard({ loading: pageLoading }: PasskeyCardProps) {
         </CardHeader>
 
         <CardContent className='p-3 sm:p-5'>
-          <div className='space-y-6'>
-            <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between xl:flex-col 2xl:flex-row'>
+          <div className='space-y-5'>
+            <div className='flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between'>
               <div className='flex items-start gap-4'>
                 <IconBadge tone='info' size='sm'>
                   <KeyRound />
@@ -187,83 +225,85 @@ export function PasskeyCard({ loading: pageLoading }: PasskeyCardProps) {
                       showDot
                       copyable={false}
                     />
-                    {backupStatus && (
-                      <StatusBadge
-                        label={backupStatus.label}
-                        variant={backupStatus.variant}
-                        showDot
-                        copyable={false}
-                      />
-                    )}
                   </div>
                   <p className='text-muted-foreground text-sm'>
-                    {t('Last used:')} {formattedLastUsed}
+                    {t('{{count}} Passkeys', { count: passkeys.length })}
                   </p>
                 </div>
               </div>
 
-              {!enabled && (
-                <Button
-                  className='w-full sm:w-auto xl:w-full 2xl:w-auto'
-                  onClick={handleRegister}
-                  disabled={!supported || registering || verification.isActive}
-                >
-                  {registering && (
-                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                  )}
-                  {t('Enable Passkey')}
-                </Button>
-              )}
+              <Button
+                className='w-full sm:w-auto'
+                onClick={() => setNameDialog({ mode: 'create' })}
+                disabled={!supported || limitReached || registering}
+              >
+                <Plus className='mr-2 h-4 w-4' />
+                {enabled ? t('Add Passkey') : t('Enable Passkey')}
+              </Button>
             </div>
 
-            {enabled && (
-              <div className='flex flex-col gap-3 border-t pt-6 sm:flex-row xl:flex-col 2xl:flex-row'>
-                <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                  <AlertDialogTrigger
-                    render={
-                      <Button
-                        variant='destructive'
-                        className='flex-1'
-                        disabled={removing}
-                      />
-                    }
-                  >
-                    {removing ? (
-                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                    ) : (
-                      <AlertTriangle className='mr-2 h-4 w-4' />
-                    )}
-                    {t('Remove Passkey')}
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>
-                        {t('Remove Passkey?')}
-                      </AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {t(
-                          'Removing Passkey will require you to sign in with your password next time. You can re-register anytime.'
-                        )}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel disabled={removing}>
-                        {t('Cancel')}
-                      </AlertDialogCancel>
-                      <AlertDialogAction
-                        variant='destructive'
-                        disabled={removing}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          handleRemove()
-                        }}
-                      >
-                        {t('Remove')}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
+            {limitReached && (
+              <p className='text-muted-foreground text-sm'>
+                {t('You can add up to {{count}} Passkeys.', {
+                  count: MAX_PASSKEYS_PER_USER,
+                })}
+              </p>
+            )}
+
+            {passkeys.length > 0 && (
+              <ItemGroup>
+                {passkeys.map((passkey) => {
+                  const createdAt = formatPasskeyDate(passkey.created_at)
+                  const lastUsedAt = formatPasskeyDate(passkey.last_used_at)
+                  return (
+                    <Item key={passkey.id} variant='outline'>
+                      <ItemMedia variant='icon'>
+                        <KeyRound />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle>{passkey.name}</ItemTitle>
+                        <ItemDescription>
+                          {passkey.rp_id || t('Unknown domain')}
+                          {createdAt ? `   ${t('Created:')} ${createdAt}` : ''}
+                          {`   ${t('Last used:')} ${lastUsedAt ?? t('Not used yet')}`}
+                        </ItemDescription>
+                      </ItemContent>
+                      <ItemActions>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          aria-label={t('Rename Passkey')}
+                          disabled={renamingId === passkey.id}
+                          onClick={() =>
+                            setNameDialog({ mode: 'rename', passkey })
+                          }
+                        >
+                          {renamingId === passkey.id ? (
+                            <Loader2 className='h-4 w-4 animate-spin' />
+                          ) : (
+                            <Pencil className='h-4 w-4' />
+                          )}
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          aria-label={t('Remove Passkey')}
+                          disabled={removingId === passkey.id}
+                          onClick={() => setDeleteTarget(passkey)}
+                        >
+                          {removingId === passkey.id ? (
+                            <Loader2 className='h-4 w-4 animate-spin' />
+                          ) : (
+                            <Trash2 className='h-4 w-4' />
+                          )}
+                        </Button>
+                      </ItemActions>
+                    </Item>
+                  )
+                })}
+              </ItemGroup>
             )}
 
             {showUnsupportedNotice && (
@@ -284,6 +324,67 @@ export function PasskeyCard({ loading: pageLoading }: PasskeyCardProps) {
           </div>
         </CardContent>
       </Card>
+
+      <PasskeyNameDialog
+        open={nameDialog !== null}
+        mode={nameDialog?.mode ?? 'create'}
+        initialName={
+          nameDialog?.mode === 'rename' ? nameDialog.passkey.name : ''
+        }
+        loading={registering || renamingId !== null}
+        onOpenChange={(open) => {
+          if (!open) setNameDialog(null)
+        }}
+        onSubmit={(name) => {
+          if (nameDialog?.mode === 'rename') {
+            void handleRename(nameDialog.passkey, name)
+            return
+          }
+          void handleRegister(name)
+        }}
+      />
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && removingId === null) setDeleteTarget(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('Remove {{name}}?', {
+                name: deleteTarget?.name ?? '',
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'Confirm your identity before removing this Passkey from your account.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removingId !== null}>
+              {t('Cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant='destructive'
+              disabled={removingId !== null}
+              onClick={(event) => {
+                event.preventDefault()
+                void handleRemove()
+              }}
+            >
+              {removingId !== null ? (
+                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+              ) : (
+                <AlertTriangle className='mr-2 h-4 w-4' />
+              )}
+              {t('Remove')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <SecureVerificationDialog {...verification.dialogProps} />
     </>

@@ -89,6 +89,10 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 		if err == nil {
 			_ = connection.Close()
 		}
+		logConnection, err := logDB.DB()
+		if err == nil {
+			_ = logConnection.Close()
+		}
 	})
 	password, err := common.Password2Hash("enrollment-password")
 	require.NoError(t, err)
@@ -671,10 +675,10 @@ func TestSecurityEnrollmentProofIsBurnedAfterBusinessFailure(t *testing.T) {
 			tx.AddError(errors.New("injected creation failure"))
 		}
 	}))
-	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin)
+	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin)
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	require.NoError(t, model.DB.Callback().Create().Remove("security_flow_creation_failure"))
-	response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin)
+	response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin)
 	assert.Equal(t, http.StatusForbidden, response.Code)
 	assert.Contains(t, response.Body.String(), "SECURITY_PROOF_CONSUMED")
 }
@@ -702,7 +706,7 @@ func TestSecurityEnrollmentProofStorageErrorsFailClosed(t *testing.T) {
 				response = securityEnrollmentRequest("POST", "/api/verify", `{"method":"password","scope":"passkey.register","password":"enrollment-password"}`, "", identity, UniversalVerify)
 				require.NoError(t, model.DB.Callback().Create().Remove("proof_storage_failure"))
 			} else {
-				response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin)
+				response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin)
 				require.NoError(t, model.DB.Callback().Update().Remove("proof_storage_failure"))
 			}
 			assert.Equal(t, http.StatusInternalServerError, response.Code)
@@ -714,7 +718,7 @@ func TestSecurityEnrollmentProofStorageErrorsFailClosed(t *testing.T) {
 			require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("purpose = ?", model.AuthFlowPurposePasskeyRegister).Count(&count).Error)
 			assert.Zero(t, count)
 			if stage == "consumption" {
-				response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin)
+				response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin)
 				var result securityEnrollmentResponse
 				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 				assert.True(t, result.Success, "a failed consumption transaction must not burn the proof")
@@ -751,7 +755,7 @@ func TestSecurityEnrollmentPendingPasskeyRejectsChangedAuthorization(t *testing.
 		t.Run(change, func(t *testing.T) {
 			user, identity := setupSecurityEnrollmentTest(t)
 			proof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: "passkey.register"}, "password")
-			response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof, identity, PasskeyRegisterBegin)
+			response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof, identity, PasskeyRegisterBegin)
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 			require.True(t, result.Success, result.Message)
@@ -811,7 +815,7 @@ func TestSecurityEnrollmentPasskeyProofProtectsChannelKeyRead(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	registrationProof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: "passkey.register"}, "password")
-	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", registrationProof, identity, PasskeyRegisterBegin)
+	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, registrationProof, identity, PasskeyRegisterBegin)
 	var body securityEnrollmentResponse
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 	require.True(t, body.Success, body.Message)
@@ -1393,7 +1397,7 @@ func completeFirstSecurityFactor(t *testing.T, identity service.AuthIdentity, pr
 		require.NoError(t, err)
 		response = securityEnrollmentRequest("POST", "/api/user/2fa/enable", string(request), "", identity, Enable2FA)
 	} else {
-		response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", "", proof.ProofToken, identity, PasskeyRegisterBegin)
+		response = securityEnrollmentRequest("POST", "/api/user/passkey/register/begin", `{"name":"Default"}`, proof.ProofToken, identity, PasskeyRegisterBegin)
 		var body securityEnrollmentResponse
 		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
 		require.True(t, body.Success, body.Message)
@@ -1639,4 +1643,61 @@ func TestSecurityEnrollmentRejectsChangedFirstFactorPolicy(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestPasskeyMultiCredentialStatusRenameAndDelete(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	rpID := "example.com"
+	first := &model.PasskeyCredential{UserID: user.Id, Name: "Work", RPID: &rpID, CredentialID: base64.StdEncoding.EncodeToString([]byte("work-credential")), PublicKey: "key"}
+	second := &model.PasskeyCredential{UserID: user.Id, Name: "Phone", RPID: &rpID, CredentialID: base64.StdEncoding.EncodeToString([]byte("phone-credential")), PublicKey: "key"}
+	require.NoError(t, model.DB.Create(first).Error)
+	require.NoError(t, model.DB.Create(second).Error)
+
+	status := securityEnrollmentRequest("GET", "/api/user/passkey", "", "", identity, PasskeyStatus)
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Passkeys []struct {
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+			} `json:"passkeys"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(status.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Passkeys, 2)
+	assert.NotContains(t, status.Body.String(), "credential_id")
+	assert.NotContains(t, status.Body.String(), "public_key")
+
+	rename := securityEnrollmentRequest("PATCH", "/api/user/passkey/"+fmt.Sprint(second.ID), `{"name":"Home"}`, "", identity, func(c *gin.Context) {
+		c.Params = gin.Params{gin.Param{Key: "id", Value: fmt.Sprint(second.ID)}}
+		PasskeyRename(c)
+	})
+	assert.JSONEq(t, `{"data":{"id":`+fmt.Sprint(second.ID)+`,"name":"Home"},"message":"","success":true}`, rename.Body.String())
+	var renamed model.PasskeyCredential
+	require.NoError(t, model.DB.First(&renamed, second.ID).Error)
+	assert.Equal(t, "Home", renamed.Name)
+
+	context, err := common.Marshal(service.PasskeyDeleteContext{PasskeyID: first.ID})
+	require.NoError(t, err)
+	wrongProof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasskeyDelete, Context: context}, service.VerificationMethodPasskey)
+	wrongDelete := securityEnrollmentRequest("DELETE", "/api/user/passkey/"+fmt.Sprint(second.ID), "", wrongProof, identity, func(c *gin.Context) {
+		c.Params = gin.Params{gin.Param{Key: "id", Value: fmt.Sprint(second.ID)}}
+		PasskeyDelete(c)
+	})
+	var wrongPayload map[string]any
+	require.NoError(t, common.Unmarshal(wrongDelete.Body.Bytes(), &wrongPayload))
+	assert.Equal(t, false, wrongPayload["success"])
+	assert.NoError(t, model.DB.First(&model.PasskeyCredential{}, second.ID).Error)
+
+	correctProof := issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopePasskeyDelete, Context: context}, service.VerificationMethodPasskey)
+	remove := securityEnrollmentRequest("DELETE", "/api/user/passkey/"+fmt.Sprint(first.ID), "", correctProof, identity, func(c *gin.Context) {
+		c.Params = gin.Params{gin.Param{Key: "id", Value: fmt.Sprint(first.ID)}}
+		PasskeyDelete(c)
+	})
+	var removePayload map[string]any
+	require.NoError(t, common.Unmarshal(remove.Body.Bytes(), &removePayload))
+	assert.Equal(t, true, removePayload["success"])
+	require.NoError(t, model.DB.First(&model.PasskeyCredential{}, second.ID).Error)
+	assert.Error(t, model.DB.First(&model.PasskeyCredential{}, first.ID).Error)
 }

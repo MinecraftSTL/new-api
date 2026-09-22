@@ -31,15 +31,20 @@ import {
   deletePasskey,
   finishPasskeyRegistration,
   getPasskeyStatus,
+  renamePasskey,
 } from '../api'
 import type { PasskeyStatus } from '../types'
+
+export const MAX_PASSKEYS_PER_USER = 16
+export const MAX_PASSKEY_NAME_LENGTH = 64
 
 export function usePasskeyManagement() {
   const [status, setStatus] = useState<PasskeyStatus | null>(null)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [registering, setRegistering] = useState(false)
-  const [removing, setRemoving] = useState(false)
+  const [renamingId, setRenamingId] = useState<number | null>(null)
+  const [removingId, setRemovingId] = useState<number | null>(null)
   const [supported, setSupported] = useState(false)
   const operation = useRef<AbortController | null>(null)
   const mounted = useRef(true)
@@ -78,7 +83,7 @@ export function usePasskeyManagement() {
   }, [fetchStatus])
 
   const register = useCallback(
-    async (proofToken: string) => {
+    async (name: string, proofToken: string) => {
       if (!supported || !navigator.credentials) {
         throw new AuthOperationError('This device does not support Passkey')
       }
@@ -92,6 +97,7 @@ export function usePasskeyManagement() {
       setRegistering(true)
       try {
         const begin = await beginPasskeyRegistration(
+          name,
           proofToken,
           controller.signal
         )
@@ -143,8 +149,8 @@ export function usePasskeyManagement() {
     [fetchStatus, supported]
   )
 
-  const remove = useCallback(
-    async (proofToken: string) => {
+  const rename = useCallback(
+    async (passkeyId: number, name: string) => {
       if (operation.current) {
         throw new AuthOperationError(
           'A security operation is already in progress.'
@@ -152,9 +158,34 @@ export function usePasskeyManagement() {
       }
       const controller = new AbortController()
       operation.current = controller
-      setRemoving(true)
+      setRenamingId(passkeyId)
       try {
-        await deletePasskey(proofToken, controller.signal)
+        await renamePasskey(passkeyId, name, controller.signal)
+        controller.signal.throwIfAborted()
+        await fetchStatus()
+      } catch (error) {
+        if (mounted.current && !controller.signal.aborted) await fetchStatus()
+        throw AuthOperationError.from(error, 'Failed to rename Passkey')
+      } finally {
+        if (operation.current === controller) operation.current = null
+        if (mounted.current) setRenamingId(null)
+      }
+    },
+    [fetchStatus]
+  )
+
+  const remove = useCallback(
+    async (passkeyId: number, proofToken: string) => {
+      if (operation.current) {
+        throw new AuthOperationError(
+          'A security operation is already in progress.'
+        )
+      }
+      const controller = new AbortController()
+      operation.current = controller
+      setRemovingId(passkeyId)
+      try {
+        await deletePasskey(passkeyId, proofToken, controller.signal)
         controller.signal.throwIfAborted()
         await fetchStatus()
       } catch (error) {
@@ -169,7 +200,7 @@ export function usePasskeyManagement() {
         throw AuthOperationError.from(error, 'Failed to remove Passkey')
       } finally {
         if (operation.current === controller) operation.current = null
-        if (mounted.current) setRemoving(false)
+        if (mounted.current) setRemovingId(null)
       }
     },
     [fetchStatus]
@@ -180,12 +211,17 @@ export function usePasskeyManagement() {
     statusError,
     loading,
     registering,
-    removing,
+    renamingId,
+    removingId,
+    renaming: renamingId !== null,
+    removing: removingId !== null,
     supported,
     enabled: Boolean(status?.enabled),
+    passkeys: status?.passkeys ?? [],
     lastUsed: status?.last_used_at ?? null,
     fetchStatus,
     register,
+    rename,
     remove,
   }
 }

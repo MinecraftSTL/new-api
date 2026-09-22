@@ -122,6 +122,15 @@ it.each(['2fa', 'passkey'] as const)(
     })
     await waitFor(() => expect(enable).toBeEnabled())
     await user.click(enable)
+    if (factor === 'passkey') {
+      await user.type(
+        await screen.findByLabelText('Passkey name'),
+        'Work'
+      )
+      await user.click(
+        screen.getByRole('button', { name: 'Continue' })
+      )
+    }
     expect(await screen.findByText(reason)).toBeVisible()
     expect(post).not.toHaveBeenCalled()
     expect(navigator.credentials.create).not.toHaveBeenCalled()
@@ -463,6 +472,11 @@ it('reports registration failure without treating a successful password check as
   await waitFor(() => expect(enable).toBeEnabled())
   await user.click(enable)
   await user.type(
+    await screen.findByLabelText('Passkey name'),
+    'Work'
+  )
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.type(
     await screen.findByLabelText('Password', { selector: 'input' }),
     'password'
   )
@@ -473,7 +487,7 @@ it('reports registration failure without treating a successful password check as
   expect(success).not.toHaveBeenCalled()
   expect(posts).toHaveBeenCalledWith(
     '/api/user/passkey/register/begin',
-    undefined,
+    { name: 'Work' },
     expect.objectContaining({
       headers: { 'X-Security-Proof': 'password-proof' },
     })
@@ -729,3 +743,125 @@ it.each(['wrong code', 'response lost'] as const)(
     ).not.toBeInTheDocument()
   }
 )
+
+it('renames and deletes individual Passkeys with target-bound verification', async () => {
+  let passkeys = [
+    {
+      id: 1,
+      name: 'Work',
+      rp_id: 'example.com',
+      created_at: '2026-01-01T00:00:00Z',
+      last_used_at: null,
+    },
+    {
+      id: 2,
+      name: 'Phone',
+      rp_id: 'example.com',
+      created_at: '2026-01-02T00:00:00Z',
+      last_used_at: null,
+    },
+  ]
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/user/passkey') {
+      return {
+        data: {
+          success: true,
+          data: { enabled: true, passkeys },
+        },
+      }
+    }
+    if (url === '/api/verify/methods') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'passkey.delete',
+            methods: [{ method: 'password', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      }
+    }
+    throw new Error(`Unexpected GET ${url}`)
+  })
+  const patch = vi
+    .spyOn(api, 'patch')
+    .mockImplementation(async (_url, data) => {
+      const name = (data as { name: string }).name
+      passkeys = passkeys.map((passkey) =>
+        passkey.id === 1 ? { ...passkey, name } : passkey
+      )
+      return { data: { success: true, data: { id: 1, name } } }
+    })
+  const post = vi
+    .spyOn(api, 'post')
+    .mockImplementation(async (url) => {
+      if (url === '/api/verify') {
+        return {
+          data: {
+            success: true,
+            data: {
+              proof_token: 'delete-proof',
+              scope: 'passkey.delete',
+              method: 'password',
+              expires_at: expiresAt(),
+            },
+          },
+        }
+      }
+      throw new Error(`Unexpected POST ${url}`)
+    })
+  const remove = vi
+    .spyOn(api, 'delete')
+    .mockImplementation(async (url) => {
+      if (url === '/api/user/passkey/1') {
+        passkeys = passkeys.filter((passkey) => passkey.id !== 1)
+      }
+      return { data: { success: true, data: {} } }
+    })
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <PasskeyCard loading={false} />
+    </QueryClientProvider>
+  )
+
+  expect(await screen.findByText('Work')).toBeVisible()
+  await user.click(
+    screen.getAllByRole('button', { name: 'Rename Passkey' })[0]
+  )
+  const nameInput = await screen.findByLabelText('Passkey name')
+  await user.clear(nameInput)
+  await user.type(nameInput, 'Home')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(patch).toHaveBeenCalledWith(
+      '/api/user/passkey/1',
+      { name: 'Home' },
+      expect.anything()
+    )
+  )
+  expect(await screen.findByText('Home')).toBeVisible()
+
+  await user.click(
+    screen.getAllByRole('button', { name: 'Remove Passkey' })[0]
+  )
+  await user.click(screen.getByRole('button', { name: 'Remove' }))
+  await user.type(
+    await screen.findByLabelText('Password', { selector: 'input' }),
+    'password'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await waitFor(() => expect(post).toHaveBeenCalled())
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledWith(
+      '/api/user/passkey/1',
+      expect.objectContaining({
+        headers: { 'X-Security-Proof': 'delete-proof' },
+      })
+    )
+  )
+  expect(await screen.findByText('Phone')).toBeVisible()
+  expect(screen.queryByText('Home')).not.toBeInTheDocument()
+})

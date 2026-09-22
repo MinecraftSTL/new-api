@@ -52,22 +52,22 @@ func LoginPasskeyBegin(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	credential, err := model.GetPasskeyByUserID(verification.State.UserID)
+	credentials, err := model.GetPasskeysByUserID(verification.State.UserID)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	credentialRPID := ""
-	if credential.RPID != nil {
-		credentialRPID = *credential.RPID
+	if len(credentials) == 0 {
+		writeSecurityOperationError(c, model.ErrPasskeyNotFound)
+		return
 	}
-	wa, rpIDs, err := passkeysvc.BuildLoginWebAuthn(c.Request, request.RPID, credentialRPID)
+	wa, rpIDs, credentials, err := passkeysvc.BuildLoginWebAuthnForCredentials(c.Request, request.RPID, credentials)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
 	user := &model.User{Id: verification.State.UserID}
-	options, sessionData, err := wa.BeginLogin(passkeysvc.NewWebAuthnUser(user, credential), webauthnlib.WithUserVerification(protocol.VerificationRequired))
+	options, sessionData, err := wa.BeginLogin(passkeysvc.NewWebAuthnUser(user, credentials...), webauthnlib.WithUserVerification(protocol.VerificationRequired))
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
@@ -114,9 +114,9 @@ func LoginPasskeyFinish(c *gin.Context) {
 		writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
 		return
 	}
-	credential, err := model.GetPasskeyByUserID(identity.UserID)
-	if err != nil {
-		writeSecurityOperationError(c, err)
+	credential, err := model.GetPasskeyByCredentialID(parsed.RawID)
+	if err != nil || credential.UserID != identity.UserID {
+		writeSecurityOperationError(c, service.ErrVerificationFailed)
 		return
 	}
 	wa, err := passkeysvc.BuildWebAuthnForRPID(c.Request, sessionData.RelyingPartyID)
