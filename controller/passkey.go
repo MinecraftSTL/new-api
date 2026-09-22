@@ -244,17 +244,17 @@ func PasskeyDelete(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	credential, err := model.GetPasskeyByIDForUser(user.Id, passkeyID)
-	if err != nil {
-		common.ApiErrorMsg(c, "该 Passkey 不存在")
-		return
-	}
 	operation, err := passkeyDeleteOperation(passkeyID)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
 	if middleware.RequireSecurityProof(c, operation) == nil {
+		return
+	}
+	credential, err := model.GetPasskeyByIDForUser(user.Id, passkeyID)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 	identity, ok := middleware.GetSessionAuthIdentity(c)
@@ -586,17 +586,6 @@ func PasskeyVerifyBegin(c *gin.Context) {
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return
-	}
-	if binding.Scope == service.VerificationScopePasskeyDelete {
-		var context service.PasskeyDeleteContext
-		if common.Unmarshal(request.Context, &context) != nil {
-			writeSecurityOperationError(c, service.ErrVerificationContextInvalid)
-			return
-		}
-		if _, err := model.GetPasskeyByIDForUser(user.Id, context.PasskeyID); err != nil {
-			common.ApiErrorMsg(c, "该 Passkey 不存在")
-			return
-		}
 	}
 	identity, ok := middleware.GetSessionAuthIdentity(c)
 	if !ok {
