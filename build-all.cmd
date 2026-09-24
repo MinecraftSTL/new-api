@@ -15,11 +15,16 @@ if errorlevel 1 (
 
 set "BUN="
 where bun >nul 2>nul
-if not errorlevel 1 (
-  for /f "delims=" %%B in ('where bun 2^>nul') do if not defined BUN set "BUN=%%B"
-)
+if not errorlevel 1 for /f "delims=" %%B in ('where bun 2^>nul') do if not defined BUN set "BUN=%%B"
 if not defined BUN if exist "%USERPROFILE%\.bun\bin\bun.exe" set "BUN=%USERPROFILE%\.bun\bin\bun.exe"
 if not defined BUN if exist "%LOCALAPPDATA%\Programs\bun\bun.exe" set "BUN=%LOCALAPPDATA%\Programs\bun\bun.exe"
+if not defined BUN if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\bun.exe" set "BUN=%LOCALAPPDATA%\Microsoft\WinGet\Links\bun.exe"
+if not defined BUN if exist "%APPDATA%\npm\bun.cmd" set "BUN=%APPDATA%\npm\bun.cmd"
+if not defined BUN if exist "%LOCALAPPDATA%\pnpm\bun.exe" set "BUN=%LOCALAPPDATA%\pnpm\bun.exe"
+for /d %%D in ("%LOCALAPPDATA%\npm-cache\_npx\*") do if not defined BUN if exist "%%~fD\node_modules\bun\bin\bun.exe" set "BUN=%%~fD\node_modules\bun\bin\bun.exe"
+for /d %%D in ("%LOCALAPPDATA%\pnpm\store\v11\projects\*") do if not defined BUN if exist "%%~fD\node_modules\bun\bin\bun.exe" set "BUN=%%~fD\node_modules\bun\bin\bun.exe"
+for /d %%D in ("%LOCALAPPDATA%\pnpm-cache\dlx\*") do if not defined BUN if exist "%%~fD\pkg\node_modules\bun\bin\bun.exe" set "BUN=%%~fD\pkg\node_modules\bun\bin\bun.exe"
+for /d %%D in ("%LOCALAPPDATA%\pnpm-cache\dlx\*") do if not defined BUN if exist "%%~fD\node_modules\bun\bin\bun.exe" set "BUN=%%~fD\node_modules\bun\bin\bun.exe"
 if not defined BUN (
   echo [ERROR] Bun was not found in PATH or common install locations.
   echo         Install Bun 1.4.x or add bun.exe to PATH.
