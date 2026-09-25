@@ -2,14 +2,15 @@ package model
 
 import (
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
 
-const passkeyUserIndex = "idx_passkey_credentials_user_id"
-
-// migratePasskeyMultiCredentials removes the legacy one-passkey-per-user
-// constraint before AutoMigrate applies the current model.
+// migratePasskeyMultiCredentials removes legacy single-credential uniqueness
+// on passkey_credentials.user_id before AutoMigrate applies the current model.
+// Index names can be rewritten by PostgreSQL imports, so match the definition
+// (one unique, non-primary index over user_id) instead of one hard-coded name.
 func migratePasskeyMultiCredentials(db *gorm.DB) error {
 	if db == nil {
 		return fmt.Errorf("migrate passkey credentials: database is nil")
@@ -22,19 +23,27 @@ func migratePasskeyMultiCredentials(db *gorm.DB) error {
 		return fmt.Errorf("inspect passkey indexes: %w", err)
 	}
 	for _, index := range indexes {
-		if index.Name() != passkeyUserIndex {
+		columns := index.Columns()
+		if len(columns) != 1 || !strings.EqualFold(columns[0], "user_id") {
+			continue
+		}
+		primary, known := index.PrimaryKey()
+		if !known {
+			return fmt.Errorf("inspect passkey user index %q primary key", index.Name())
+		}
+		if primary {
 			continue
 		}
 		unique, known := index.Unique()
 		if !known {
-			return fmt.Errorf("inspect passkey user index uniqueness")
+			return fmt.Errorf("inspect passkey user index %q uniqueness", index.Name())
 		}
-		if unique {
-			if err := db.Migrator().DropIndex(&PasskeyCredential{}, passkeyUserIndex); err != nil {
-				return fmt.Errorf("drop legacy passkey user index: %w", err)
-			}
+		if !unique {
+			continue
 		}
-		return nil
+		if err := db.Migrator().DropIndex(&PasskeyCredential{}, index.Name()); err != nil {
+			return fmt.Errorf("drop legacy passkey user index %q: %w", index.Name(), err)
+		}
 	}
 	return nil
 }

@@ -73,6 +73,40 @@ func TestUserAuthFenceRollbackExpiresAndRecovers(t *testing.T) {
 	assert.EqualValues(t, 1, cached.AuthVersion)
 }
 
+func TestFailedPasskeyCreateDoesNotLeaveAuthFence(t *testing.T) {
+	truncateTables(t)
+	server := useUserCacheMiniRedis(t)
+
+	user := User{
+		Username:    "passkey-create-failure",
+		Password:    "password",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+	}
+	require.NoError(t, DB.Create(&user).Error)
+	require.NoError(t, CreatePasskeyCredentialWithAuthVersion(&PasskeyCredential{
+		UserID:       user.Id,
+		Name:         "First",
+		CredentialID: "duplicate-credential",
+		PublicKey:    "public-key",
+	}))
+
+	err := CreatePasskeyCredentialWithAuthVersion(&PasskeyCredential{
+		UserID:       user.Id,
+		Name:         "Duplicate",
+		CredentialID: "duplicate-credential",
+		PublicKey:    "public-key",
+	})
+	require.ErrorIs(t, err, ErrPasskeyCredentialExists)
+	assert.False(t, server.Exists(getUserAuthFenceKey(user.Id)))
+
+	cached, err := GetUserCache(user.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, cached.AuthVersion)
+}
+
 func TestPendingUserAuthFenceRejectsStaleCacheWrite(t *testing.T) {
 	server := useUserCacheMiniRedis(t)
 	const userID = 4201

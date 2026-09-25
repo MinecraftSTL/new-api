@@ -300,10 +300,11 @@ func createPasskeyCredentialWithAuthVersion(credential *PasskeyCredential, ident
 		if count >= MaxPasskeysPerUser {
 			return ErrPasskeyLimitReached
 		}
-		if _, err := IncrementUserAuthVersionWithTx(tx, credential.UserID); err != nil {
+		if err := createPasskeyCredentialWithTx(tx, credential); err != nil {
 			return err
 		}
-		return createPasskeyCredentialWithTx(tx, credential)
+		_, err := IncrementUserAuthVersionWithTx(tx, credential.UserID)
+		return err
 	}); err != nil {
 		return err
 	}
