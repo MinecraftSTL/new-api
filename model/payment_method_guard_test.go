@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -350,6 +351,54 @@ func TestRechargeEpayEnforcesFinalWalletQuotaLimit(t *testing.T) {
 			}
 			assert.Equal(t, tc.wantQuota, getUserQuotaForPaymentGuardTest(t, user.Id))
 			assert.Equal(t, tc.wantStatus, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+		})
+	}
+}
+
+func TestStripeTopUpCreditsOrderAmount(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 7
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	testCases := []struct {
+		name     string
+		userId   int
+		complete func(t *testing.T, tradeNo string)
+	}{
+		{
+			name:   "webhook recharge",
+			userId: 601,
+			complete: func(t *testing.T, tradeNo string) {
+				require.NoError(t, Recharge(tradeNo, "", "127.0.0.1"))
+			},
+		},
+		{
+			name:   "manual completion",
+			userId: 602,
+			complete: func(t *testing.T, tradeNo string) {
+				require.NoError(t, ManualCompleteTopUp(tradeNo, "127.0.0.1"))
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			user := insertUserForPaymentGuardTest(t, tc.userId, 0)
+			tradeNo := fmt.Sprintf("STRIPE-CREDIT-%d", user.Id)
+			require.NoError(t, DB.Create(&TopUp{
+				UserId:          user.Id,
+				Amount:          3,
+				Money:           99.99,
+				TradeNo:         tradeNo,
+				PaymentMethod:   PaymentMethodStripe,
+				PaymentProvider: PaymentProviderStripe,
+				CreateTime:      time.Now().Unix(),
+				Status:          common.TopUpStatusPending,
+			}).Error)
+
+			tc.complete(t, tradeNo)
+			assert.Equal(t, 21, getUserQuotaForPaymentGuardTest(t, user.Id))
 		})
 	}
 }
