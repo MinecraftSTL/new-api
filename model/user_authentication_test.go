@@ -428,6 +428,7 @@ func TestPasskeyMultiCredentialMigrationPreservesLegacyCredential(t *testing.T) 
 		deleted_at datetime
 	)`).Error)
 	require.NoError(t, DB.Exec("CREATE UNIQUE INDEX idx_passkey_credentials_user_id ON passkey_credentials(user_id)").Error)
+	require.NoError(t, DB.Exec("CREATE UNIQUE INDEX idx_16495_idx_passkey_credentials_user_id ON passkey_credentials(user_id)").Error)
 	require.NoError(t, DB.Exec("CREATE UNIQUE INDEX idx_passkey_credentials_credential_id ON passkey_credentials(credential_id)").Error)
 	require.NoError(t, DB.Exec("INSERT INTO passkey_credentials (id, user_id, credential_id, public_key) VALUES (?, ?, ?, ?)", 1, 9, "legacy-credential", "key").Error)
 
@@ -437,6 +438,8 @@ func TestPasskeyMultiCredentialMigrationPreservesLegacyCredential(t *testing.T) 
 		require.NoError(t, backfillPasskeyNames(DB))
 	}
 	runMigration()
+	assert.False(t, DB.Migrator().HasIndex(&PasskeyCredential{}, "idx_16495_idx_passkey_credentials_user_id"))
+	assert.True(t, DB.Migrator().HasIndex(&PasskeyCredential{}, "idx_passkey_credentials_user_id"))
 
 	var migrated PasskeyCredential
 	require.NoError(t, DB.First(&migrated, 1).Error)
