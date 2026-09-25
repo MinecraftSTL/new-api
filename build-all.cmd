@@ -2,6 +2,11 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
+rem Use the Windows system HTTP proxy when enabled.
+call :load_system_proxy
+if not defined HTTP_PROXY if defined HTTPS_PROXY set "HTTP_PROXY=%HTTPS_PROXY%"
+if not defined HTTPS_PROXY if defined HTTP_PROXY set "HTTPS_PROXY=%HTTP_PROXY%"
+
 set "OUT_DIR=build"
 set "TARGETS=linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64"
 
@@ -66,6 +71,31 @@ echo   %CD%\%OUT_DIR%
 echo.
 echo Files:
 for %%F in ("%OUT_DIR%\new-api-*") do echo   %%~nxF
+exit /b 0
+
+:load_system_proxy
+set "PROXY_ENABLE="
+set "PROXY_SERVER="
+for /f "tokens=2,*" %%A in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable 2^>nul ^| findstr /I "ProxyEnable"') do set "PROXY_ENABLE=%%B"
+if /I not "%PROXY_ENABLE%"=="0x1" exit /b 0
+for /f "tokens=2,*" %%A in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer 2^>nul ^| findstr /I "ProxyServer"') do set "PROXY_SERVER=%%B"
+if not defined PROXY_SERVER exit /b 0
+set "PROXY_HAS_SCHEME="
+for /f "tokens=1,* delims==" %%A in ("%PROXY_SERVER%") do if not "%%B"=="" set "PROXY_HAS_SCHEME=1"
+if not defined PROXY_HAS_SCHEME (
+  set "HTTP_PROXY=http://%PROXY_SERVER%"
+  exit /b 0
+)
+for %%P in (%PROXY_SERVER:;= %) do (
+  for /f "tokens=1,* delims==" %%A in ("%%P") do (
+    if /I "%%A"=="http" set "HTTP_PROXY=http://%%B"
+    if /I "%%A"=="https" set "HTTPS_PROXY=http://%%B"
+    if /I "%%A"=="socks" set "HTTP_PROXY=socks5://%%B"
+    if /I "%%A"=="socks" set "HTTPS_PROXY=socks5://%%B"
+    if /I "%%A"=="socks5" set "HTTP_PROXY=socks5://%%B"
+    if /I "%%A"=="socks5" set "HTTPS_PROXY=socks5://%%B"
+  )
+)
 exit /b 0
 
 :build_target
