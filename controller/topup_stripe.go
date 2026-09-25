@@ -20,6 +20,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v81"
 	"github.com/stripe/stripe-go/v81/checkout/session"
+	"github.com/stripe/stripe-go/v81/price"
 	"github.com/stripe/stripe-go/v81/webhook"
 	"github.com/thanhpk/randstr"
 )
@@ -58,7 +59,7 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "获取用户分组失败"})
 		return
 	}
-	if rejectInvalidCreditedQuota(c, id, getStripeCreditedQuota(req.Amount, group)) {
+	if rejectInvalidCreditedQuota(c, id, getStripeCreditedQuota(req.Amount)) {
 		return
 	}
 	payMoney := getStripePayMoney(float64(req.Amount), group)
@@ -100,16 +101,14 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		return
 	}
 	chargedMoney := GetChargedAmount(float64(req.Amount), *user)
-	if rejectInvalidCreditedQuota(c, id,
-		decimal.NewFromFloat(chargedMoney).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-	) {
+	if rejectInvalidCreditedQuota(c, id, getStripeCreditedQuota(req.Amount)) {
 		return
 	}
 
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
 
-	payLink, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, req.SuccessURL, req.CancelURL)
+	payLink, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, user.Group, req.SuccessURL, req.CancelURL)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 创建 Checkout Session 失败 user_id=%d trade_no=%s amount=%d error=%q", id, referenceId, req.Amount, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
@@ -355,12 +354,24 @@ func sessionExpired(ctx context.Context, event stripe.Event) {
 //   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
 //
 // Returns the checkout session URL or an error if the session creation fails.
-func genStripeLink(referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string) (string, error) {
+func genStripeLink(referenceId string, customerId string, email string, amount int64, group string, successURL string, cancelURL string) (string, error) {
 	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
 		return "", fmt.Errorf("无效的Stripe API密钥")
 	}
+	if setting.StripePriceId == "" {
+		return "", fmt.Errorf("未配置 Stripe 价格 ID")
+	}
 
 	stripe.Key = setting.StripeApiSecret
+
+	stripePrice, err := price.Get(setting.StripePriceId, nil)
+	if err != nil {
+		return "", fmt.Errorf("获取 Stripe 价格失败: %w", err)
+	}
+	priceData, err := getStripePriceData(stripePrice, getStripePayMultiplier(float64(amount), group))
+	if err != nil {
+		return "", err
+	}
 
 	// Use custom URLs if provided, otherwise use defaults
 	if successURL == "" {
@@ -376,8 +387,8 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 		CancelURL:         stripe.String(cancelURL),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{
-				Price:    stripe.String(setting.StripePriceId),
-				Quantity: stripe.Int64(amount),
+				PriceData: priceData,
+				Quantity:  stripe.Int64(amount),
 			},
 		},
 		Mode:                stripe.String(string(stripe.CheckoutSessionModePayment)),
@@ -403,22 +414,70 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 }
 
 func GetChargedAmount(count float64, user model.User) float64 {
-	topUpGroupRatio := common.GetTopupGroupRatio(user.Group)
-	if topUpGroupRatio == 0 {
-		topUpGroupRatio = 1
-	}
-
-	return count * topUpGroupRatio
+	return getStripePayMoney(count, user.Group)
 }
 
-func getStripeCreditedQuota(amount int64, group string) decimal.Decimal {
-	topUpGroupRatio := common.GetTopupGroupRatio(group)
-	if topUpGroupRatio == 0 {
-		topUpGroupRatio = 1
+func getStripeCreditedQuota(amount int64) decimal.Decimal {
+	return decimal.NewFromInt(amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+}
+
+func getStripePayMultiplier(amount float64, group string) float64 {
+	topupGroupRatio := common.GetTopupGroupRatio(group)
+	if topupGroupRatio == 0 {
+		topupGroupRatio = 1
 	}
-	return decimal.NewFromInt(amount).
-		Mul(decimal.NewFromFloat(topUpGroupRatio)).
-		Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+
+	discount := 1.0
+	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok && ds > 0 {
+		discount = ds
+	}
+	return topupGroupRatio * discount
+}
+
+func getStripeUnitAmount(stripePrice *stripe.Price) (decimal.Decimal, error) {
+	if stripePrice == nil {
+		return decimal.Zero, errors.New("Stripe 价格不存在")
+	}
+	if stripePrice.BillingScheme != stripe.PriceBillingSchemePerUnit {
+		return decimal.Zero, errors.New("Stripe 价格必须是按件计费")
+	}
+
+	unitAmount := decimal.NewFromInt(stripePrice.UnitAmount)
+	if stripePrice.UnitAmount == 0 {
+		unitAmount = decimal.NewFromFloat(stripePrice.UnitAmountDecimal)
+	}
+	if !unitAmount.IsPositive() {
+		return decimal.Zero, errors.New("Stripe 价格单价必须大于 0")
+	}
+	return unitAmount, nil
+}
+
+func getStripePriceData(stripePrice *stripe.Price, multiplier float64) (*stripe.CheckoutSessionLineItemPriceDataParams, error) {
+	unitAmount, err := getStripeUnitAmount(stripePrice)
+	if err != nil {
+		return nil, err
+	}
+	if stripePrice.Product == nil || stripePrice.Product.ID == "" {
+		return nil, errors.New("Stripe 价格未关联商品")
+	}
+	if multiplier <= 0 {
+		return nil, errors.New("Stripe 收款倍率必须大于 0")
+	}
+
+	chargeUnitAmount := unitAmount.Mul(decimal.NewFromFloat(multiplier)).Round(12)
+	if !chargeUnitAmount.IsPositive() {
+		return nil, errors.New("Stripe 收款单价必须大于 0")
+	}
+
+	priceData := &stripe.CheckoutSessionLineItemPriceDataParams{
+		Currency:          stripe.String(strings.ToLower(string(stripePrice.Currency))),
+		Product:           stripe.String(stripePrice.Product.ID),
+		UnitAmountDecimal: stripe.Float64(chargeUnitAmount.InexactFloat64()),
+	}
+	if stripePrice.TaxBehavior != "" {
+		priceData.TaxBehavior = stripe.String(string(stripePrice.TaxBehavior))
+	}
+	return priceData, nil
 }
 
 func getStripePayMoney(amount float64, group string) float64 {
@@ -426,20 +485,7 @@ func getStripePayMoney(amount float64, group string) float64 {
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		amount = amount / common.QuotaPerUnit
 	}
-	// Using float64 for monetary calculations is acceptable here due to the small amounts involved
-	topupGroupRatio := common.GetTopupGroupRatio(group)
-	if topupGroupRatio == 0 {
-		topupGroupRatio = 1
-	}
-	// apply optional preset discount by the original request amount (if configured), default 1.0
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(originalAmount)]; ok {
-		if ds > 0 {
-			discount = ds
-		}
-	}
-	payMoney := amount * setting.StripeUnitPrice * topupGroupRatio * discount
-	return payMoney
+	return amount * setting.StripeUnitPrice * getStripePayMultiplier(originalAmount, group)
 }
 
 func getStripeMinTopup() int64 {

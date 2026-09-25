@@ -116,6 +116,12 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[st
 	return ErrTopUpQuotaLimitExceeded
 }
 
+func getTopUpAmountQuota(amount int64) (int, error) {
+	return common.WalletQuotaFromDecimalStrict(
+		decimal.NewFromInt(amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+	)
+}
+
 func (topUp *TopUp) Update() error {
 	var err error
 	err = DB.Save(topUp).Error
@@ -266,9 +272,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return err
 		}
 
-		quota, err = common.WalletQuotaFromDecimalStrict(
-			decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-		)
+		quota, err = getTopUpAmountQuota(topUp.Amount)
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
@@ -477,19 +481,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return errors.New("订单状态不是待支付，无法补单")
 		}
 
-		// 计算应充值额度：
-		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
-		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
+		// Stripe 充值额度按订单 Amount 结算，分组倍率只影响收款金额。
 		var quotaErr error
-		if topUp.PaymentProvider == PaymentProviderStripe {
-			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
-				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-			)
-		} else {
-			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
-				decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
-			)
-		}
+		quotaToAdd, quotaErr = getTopUpAmountQuota(topUp.Amount)
 		if quotaErr != nil || quotaToAdd <= 0 {
 			return ErrInvalidTopUpQuota
 		}
