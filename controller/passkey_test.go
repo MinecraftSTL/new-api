@@ -841,3 +841,84 @@ func TestBuildLoginWebAuthnForCredentialsIncludesAllMatchingCredentials(t *testi
 	assert.Equal(t, "example.com", wa.Config.RPID)
 	assert.Contains(t, available, "example.com")
 }
+
+func TestPasskeyFinishAllowsAnyCredentialWhenMultipleAreAllowed(t *testing.T) {
+	tests := []struct {
+		name          string
+		beginPath     string
+		finishPath    string
+		beginHandler  gin.HandlerFunc
+		finishHandler gin.HandlerFunc
+		loginFactor   bool
+	}{
+		{
+			name:          "sensitive action",
+			beginPath:     "/api/user/passkey/verify/begin",
+			finishPath:    "/api/user/passkey/verify/finish",
+			beginHandler:  PasskeyVerifyBegin,
+			finishHandler: PasskeyVerifyFinish,
+		},
+		{
+			name:          "login factor",
+			beginPath:     "/api/user/login/passkey/begin",
+			finishPath:    "/api/user/login/passkey/finish",
+			beginHandler:  LoginPasskeyBegin,
+			finishHandler: LoginPasskeyFinish,
+			loginFactor:   true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			user, identity := setupSecurityEnrollmentTest(t)
+			key := newSecurityLoginPasskey(t, user.Id)
+			newSecurityLoginPasskey(t, user.Id)
+
+			beginBody := map[string]any{"scope": service.VerificationScopeAccessTokenGenerate}
+			requestIdentity := identity
+			var parentFlowToken string
+			if test.loginFactor {
+				pending, err := service.StartLoginVerification(user, "password", nil)
+				require.NoError(t, err)
+				parentFlowToken = pending.FlowToken
+				beginBody = map[string]any{"flow_token": parentFlowToken}
+				requestIdentity = service.AuthIdentity{}
+			}
+
+			body, err := common.Marshal(beginBody)
+			require.NoError(t, err)
+			beginResponse := securityEnrollmentRequest(http.MethodPost, test.beginPath, string(body), "", requestIdentity, test.beginHandler)
+			var begin securityEnrollmentResponse
+			require.NoError(t, common.Unmarshal(beginResponse.Body.Bytes(), &begin))
+			require.True(t, begin.Success, beginResponse.Body.String())
+
+			var options struct {
+				FlowToken string `json:"flow_token"`
+				Options   struct {
+					PublicKey struct {
+						Challenge string `json:"challenge"`
+					} `json:"publicKey"`
+				} `json:"options"`
+			}
+			require.NoError(t, common.Unmarshal(begin.Data, &options))
+			require.NotEmpty(t, options.FlowToken)
+			require.NotEmpty(t, options.Options.PublicKey.Challenge)
+
+			finishBody := map[string]any{
+				"flow_token": options.FlowToken,
+				"credential": securityPasskeyResponse(t, key, options.Options.PublicKey.Challenge, false, 1),
+			}
+			if test.loginFactor {
+				finishBody["flow_token"] = parentFlowToken
+				finishBody["passkey_flow_token"] = options.FlowToken
+			}
+
+			body, err = common.Marshal(finishBody)
+			require.NoError(t, err)
+			finishResponse := securityEnrollmentRequest(http.MethodPost, test.finishPath, string(body), "", requestIdentity, test.finishHandler)
+			var result securityEnrollmentResponse
+			require.NoError(t, common.Unmarshal(finishResponse.Body.Bytes(), &result))
+			require.True(t, result.Success, finishResponse.Body.String())
+		})
+	}
+}
