@@ -128,7 +128,12 @@ func LoginPasskeyFinish(c *gin.Context) {
 		writeSecurityOperationError(c, service.ErrVerificationFailed)
 		return
 	}
-	validated, err := wa.ValidateLogin(passkeysvc.NewWebAuthnUser(&model.User{Id: identity.UserID}, credential), *sessionData, parsed)
+	credentials, err := model.GetPasskeysByUserID(identity.UserID)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	validated, err := wa.ValidateLogin(passkeysvc.NewWebAuthnUser(&model.User{Id: identity.UserID}, credentials...), *sessionData, parsed)
 	if err != nil {
 		writeSecurityOperationError(c, err)
 		return

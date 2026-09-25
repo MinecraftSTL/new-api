@@ -686,7 +686,12 @@ func PasskeyVerifyFinish(c *gin.Context) {
 		writeSecurityOperationError(c, service.ErrVerificationFailed)
 		return
 	}
-	waUser := passkeysvc.NewWebAuthnUser(user, credential)
+	credentials, err := model.GetPasskeysByUserID(user.Id)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	waUser := passkeysvc.NewWebAuthnUser(user, credentials...)
 	validatedCredential, err := wa.ValidateLogin(waUser, *sessionData, parsedCredential)
 	if err != nil {
 		writeSecurityOperationError(c, err)
