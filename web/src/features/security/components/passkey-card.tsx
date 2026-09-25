@@ -85,7 +85,7 @@ type NameDialogState =
 
 function formatPasskeyDate(value?: string | null) {
   return value && !Number.isNaN(Date.parse(value))
-    ? dayjs(value).format('LLL')
+    ? dayjs(value).format('YYYY-MM-DD HH:mm:ss')
     : null
 }
 
@@ -264,8 +264,10 @@ export function PasskeyCard({ loading: pageLoading }: PasskeyCardProps) {
                         <ItemTitle>{passkey.name}</ItemTitle>
                         <ItemDescription>
                           {passkey.rp_id || t('Unknown domain')}
-                          {createdAt ? `   ${t('Created:')} ${createdAt}` : ''}
-                          {`   ${t('Last used:')} ${lastUsedAt ?? t('Not used yet')}`}
+                          {createdAt
+                            ? `\u00a0\u00a0${t('Created:')} ${createdAt}`
+                            : ''}
+                          {`\u00a0\u00a0${t('Last used:')} ${lastUsedAt ?? t('Not used yet')}`}
                         </ItemDescription>
                       </ItemContent>
                       <ItemActions>

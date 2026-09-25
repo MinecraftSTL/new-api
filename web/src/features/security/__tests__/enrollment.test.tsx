@@ -828,6 +828,11 @@ it('renames and deletes individual Passkeys with target-bound verification', asy
   )
 
   expect(await screen.findByText('Work')).toBeVisible()
+  const descriptions = screen.getAllByText(/example\.com/)
+  expect(descriptions).toHaveLength(2)
+  expect(descriptions[0]).toHaveTextContent(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)
+  expect(descriptions[0].textContent).not.toContain('\u0000')
+  expect(descriptions[0].textContent).not.toContain('\ufffd')
   await user.click(
     screen.getAllByRole('button', { name: 'Rename Passkey' })[0]
   )
