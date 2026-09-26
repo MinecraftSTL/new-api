@@ -51,42 +51,52 @@ const settings = {
   gotify_token: '',
   gotify_priority: 5,
   accept_unset_model_ratio_model: true,
-  record_ip_log: true,
   upstream_model_update_notify_enabled: true,
 }
 
 afterEach(() => vi.restoreAllMocks())
 
-describe('user settings saves across profile and security', () => {
-  it('disabling IP recording sends the latest complete notification settings', async () => {
+describe('user settings saves', () => {
+  it('saves the latest complete notification settings', async () => {
     const get = vi.spyOn(api, 'get').mockResolvedValue({
       data: {
         success: true,
-        data: { ...profile, setting: JSON.stringify(settings) },
+        data: {
+          ...profile,
+          setting: JSON.stringify({ ...settings, record_ip_log: true }),
+        },
       },
     })
     const put = vi
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
-    await updateUserSettings({ record_ip_log: false })
+
+    await updateUserSettings({ quota_warning_threshold: 2500 })
+
     expect(get).toHaveBeenCalledWith('/api/user/self')
     expect(put).toHaveBeenCalledWith('/api/user/setting', {
       ...settings,
-      record_ip_log: false,
+      quota_warning_threshold: 2500,
     })
+    expect(put).not.toHaveBeenCalledWith(
+      '/api/user/setting',
+      expect.objectContaining({ record_ip_log: expect.anything() })
+    )
   })
 
-  it('saving IP recording for a user with no settings supplies the existing defaults', async () => {
+  it('supplies the existing defaults when no settings are stored', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: profile },
     })
     const put = vi
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
-    await updateUserSettings({ record_ip_log: true })
+
+    await updateUserSettings({ quota_warning_threshold: 2500 })
+
     expect(put).toHaveBeenCalledWith('/api/user/setting', {
       notify_type: 'email',
-      quota_warning_threshold: 500000,
+      quota_warning_threshold: 2500,
       notification_email: '',
       webhook_url: '',
       webhook_secret: '',
@@ -95,12 +105,11 @@ describe('user settings saves across profile and security', () => {
       gotify_token: '',
       gotify_priority: 5,
       accept_unset_model_ratio_model: false,
-      record_ip_log: true,
       upstream_model_update_notify_enabled: false,
     })
   })
 
-  it('alternating notification and IP saves retains the latest values from each page', async () => {
+  it('retains the latest values across consecutive saves', async () => {
     let saved = { ...settings }
     vi.spyOn(api, 'get').mockImplementation(async () => ({
       data: {
@@ -112,22 +121,24 @@ describe('user settings saves across profile and security', () => {
       saved = body as typeof settings
       return { data: { success: true } }
     })
-    await updateUserSettings({ record_ip_log: false })
+
     await updateUserSettings({ quota_warning_threshold: 2500 })
-    await updateUserSettings({ record_ip_log: true })
+    await updateUserSettings({ accept_unset_model_ratio_model: false })
+
     expect(saved).toEqual({
       ...settings,
       quota_warning_threshold: 2500,
-      record_ip_log: true,
+      accept_unset_model_ratio_model: false,
     })
   })
 
   it('a rejected profile read prevents the settings write', async () => {
     vi.spyOn(api, 'get').mockRejectedValue(new Error('offline'))
     const put = vi.spyOn(api, 'put')
-    await expect(updateUserSettings({ record_ip_log: false })).rejects.toThrow(
-      'offline'
-    )
+
+    await expect(
+      updateUserSettings({ quota_warning_threshold: 2500 })
+    ).rejects.toThrow('offline')
     expect(put).not.toHaveBeenCalled()
   })
 
@@ -136,10 +147,13 @@ describe('user settings saves across profile and security', () => {
       data: { success: false, message: 'Unavailable' },
     })
     const put = vi.spyOn(api, 'put')
-    expect(await updateUserSettings({ record_ip_log: false })).toEqual({
-      success: false,
-      message: 'Unavailable',
-    })
+
+    expect(await updateUserSettings({ quota_warning_threshold: 2500 })).toEqual(
+      {
+        success: false,
+        message: 'Unavailable',
+      }
+    )
     expect(put).not.toHaveBeenCalled()
   })
 
@@ -150,45 +164,57 @@ describe('user settings saves across profile and security', () => {
     vi.spyOn(api, 'put').mockResolvedValue({
       data: { success: false, message: 'Save failed' },
     })
-    expect(await updateUserSettings({ record_ip_log: true })).toEqual({
-      success: false,
-      message: 'Save failed',
-    })
+
+    expect(await updateUserSettings({ quota_warning_threshold: 2500 })).toEqual(
+      {
+        success: false,
+        message: 'Save failed',
+      }
+    )
   })
 
-  it('saving a stale notification form keeps the current IP setting and the notification edits', async () => {
+  it('notification saves no longer expose or submit an IP recording preference', async () => {
     const onUpdate = vi.fn()
     vi.spyOn(api, 'get').mockResolvedValue({
       data: {
         success: true,
         data: {
           ...profile,
-          setting: JSON.stringify({ ...settings, record_ip_log: false }),
+          setting: JSON.stringify({ ...settings, record_ip_log: true }),
         },
       },
     })
     const put = vi
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
+
     render(
       <NotificationTab
-        profile={{ ...profile, setting: JSON.stringify(settings) }}
+        profile={{
+          ...profile,
+          setting: JSON.stringify({ ...settings, record_ip_log: true }),
+        }}
         onUpdate={onUpdate}
       />
     )
     expect(
       screen.queryByRole('switch', { name: 'Record IP Address' })
-    ).not.toBeInTheDocument()
+    ).toBeNull()
+
     fireEvent.change(
       screen.getByRole('spinbutton', { name: 'Quota Warning Threshold' }),
       { target: { value: '2700' } }
     )
     fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }))
     await waitFor(() => expect(onUpdate).toHaveBeenCalled())
+
     expect(put).toHaveBeenCalledWith('/api/user/setting', {
       ...settings,
       quota_warning_threshold: 2700,
-      record_ip_log: false,
     })
+    expect(put).not.toHaveBeenCalledWith(
+      '/api/user/setting',
+      expect.objectContaining({ record_ip_log: expect.anything() })
+    )
   })
 })
