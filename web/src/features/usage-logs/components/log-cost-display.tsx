@@ -53,7 +53,7 @@ function ToolSurchargeMarker() {
         render={
           <Badge
             variant='warning'
-            className='h-5 min-w-5 cursor-help gap-0 rounded-full px-1'
+            className='h-5 min-w-5 cursor-help gap-0 rounded-md px-1'
             role='img'
             aria-label={label}
             tabIndex={0}
