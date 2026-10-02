@@ -189,6 +189,8 @@ describe('log cost display', () => {
     })
     expect(marker).toHaveAttribute('data-tool-surcharge-indicator', 'true')
     expect(marker).toHaveAttribute('tabindex', '0')
+    expect(marker).toHaveClass('rounded-md')
+    expect(marker).not.toHaveClass('rounded-full')
   })
 
   test('shows subscription cost and source alongside the legacy surcharge marker', () => {
