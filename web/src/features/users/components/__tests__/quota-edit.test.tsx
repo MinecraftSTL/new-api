@@ -63,10 +63,36 @@ function renderDrawer() {
     if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
     }
+    if (url === '/api/verify/methods') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'admin.user.update',
+            methods: [{ method: '2fa', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      }
+    }
     return { data: { success: true, data: target } }
   })
   const put = vi.spyOn(api, 'put').mockResolvedValue({
     data: { success: true },
+  })
+  // Quota adjustments are a sensitive administrative change, so the drawer
+  // collects a step-up proof before sending the combined update.
+  vi.spyOn(api, 'post').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        proof_token: 'update-proof',
+        method: '2fa',
+        scope: 'admin.user.update',
+        expires_at: Math.floor(Date.now() / 1000) + 60,
+      },
+    },
   })
 
   const client = new QueryClient({
@@ -91,6 +117,17 @@ async function selectOperator(operator: QuotaAdjustOperator) {
   const user = userEvent.setup()
   await user.click(screen.getByRole('combobox', { name: 'Mode' }))
   await user.click(await screen.findByRole('option', { name: operator }))
+}
+
+async function saveWithVerification(
+  user: Awaited<ReturnType<typeof userEvent.setup>>
+) {
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await user.type(
+    await screen.findByLabelText('Authenticator code or backup code'),
+    '123456'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
 }
 
 beforeEach(() => {
@@ -157,13 +194,17 @@ it.each<[QuotaAdjustOperator, string, { mode: string; value: number }]>([
     await user.type(screen.getByRole('spinbutton', { name: 'Amount' }), amount)
     expect(put).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    await saveWithVerification(user)
     await waitFor(() =>
       expect(put).toHaveBeenCalledWith(
         '/api/user/',
         expect.objectContaining({
           id: 2,
           quota_adjustment: expectedAdjustment,
+        }),
+        expect.objectContaining({
+          headers: { 'X-Security-Proof': 'update-proof' },
+          singleUseAuthorization: true,
         })
       )
     )
@@ -201,7 +242,7 @@ it('keeps the drawer open when the combined save fails', async () => {
 
   const user = userEvent.setup()
   await user.type(screen.getByRole('spinbutton', { name: 'Amount' }), '5')
-  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await saveWithVerification(user)
 
   await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
   const payload = put.mock.calls[0][1] as Record<string, unknown>

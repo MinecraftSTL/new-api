@@ -120,7 +120,7 @@ func PasskeyRegisterBegin(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
 		return
@@ -170,7 +170,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
 		return
@@ -257,7 +257,7 @@ func PasskeyDelete(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
 		return
@@ -534,6 +534,10 @@ func AdminResetPasskey(c *gin.Context) {
 		common.ApiErrorMsg(c, "no permission")
 		return
 	}
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserPasskeyReset, service.AdminUserContext{UserID: user.Id})
+	if authorization == nil {
+		return
+	}
 
 	credentials, err := model.GetPasskeysByUserID(user.Id)
 	if err != nil {
@@ -558,8 +562,9 @@ func AdminResetPasskey(c *gin.Context) {
 	}
 
 	recordManageAuditFor(c, user.Id, "user.reset_passkey", map[string]any{
-		"username": user.Username,
-		"id":       user.Id,
+		"username":            user.Username,
+		"id":                  user.Id,
+		"verification_method": authorization.Method,
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -587,7 +592,7 @@ func PasskeyVerifyBegin(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
 		return
@@ -658,7 +663,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 		writeSecurityOperationError(c, service.ErrVerificationFailed)
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
 		return
