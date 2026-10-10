@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"net/http"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -53,8 +52,8 @@ func UpdateRedemptionBatch(c *gin.Context) {
 		}
 	}
 	if req.ExpiredTime != nil {
-		if valid, msg := validateExpiredTime(c, *req.ExpiredTime); !valid {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
+		if err := validateExpiredTime(*req.ExpiredTime); err != nil {
+			common.ApiError(c, err)
 			return
 		}
 	}

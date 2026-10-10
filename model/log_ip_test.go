@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func TestRecordLogsAlwaysPersistClientIP(t *testing.T) {
 		ModelName: "gpt-test",
 		TokenName: "test-token",
 		Quota:     1,
-		Content:   "request completed",
+		Content:   []*common.Message{common.NewMessage("request completed")},
 		TokenId:   3,
 		Group:     "default",
 		Other:     &LogOther{},

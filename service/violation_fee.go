@@ -131,7 +131,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	noteQuotaClamp(relayInfo, beforeGroupClamp)
 
 	if err := PostConsumeQuota(relayInfo, feeQuota, 0, true); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("failed to charge violation fee: %s", err.Error()))
+		logger.LogError(ctx, common.LogText("failed to charge violation fee: %s", err.Error()))
 		return false
 	}
 
@@ -157,12 +157,12 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	attachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		QuotaBeforeGroup: feeQuotaBeforeGroup,
 		ChannelId:        relayInfo.ChannelId,
 		ModelName:        relayInfo.OriginModelName,
 		TokenName:        tokenName,
 		Quota:            feeQuota,
-		QuotaBeforeGroup: feeQuotaBeforeGroup,
-		Content:          "Violation fee charged",
+		Content:          []*common.Message{common.NewMessage("Violation fee charged")},
 		TokenId:          relayInfo.TokenId,
 		UseTimeSeconds:   int(useTimeSeconds),
 		IsStream:         relayInfo.IsStream,

@@ -45,7 +45,7 @@ func parsePasskeyFinishRequest(c *gin.Context) (*passkeyFinishRequest, error) {
 		return nil, err
 	}
 	if request.FlowToken == "" || len(request.Credential) == 0 {
-		return nil, errors.New("Passkey 流程参数不完整")
+		return nil, errors.New("incomplete Passkey flow parameters")
 	}
 	return &request, nil
 }
@@ -68,7 +68,7 @@ func passkeyDeleteOperation(passkeyID int) (service.VerificationOperation, error
 
 func PasskeyRegisterBegin(c *gin.Context) {
 	if !system_setting.PasskeySettingsSnapshot().Enabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "管理员未启用 Passkey 登录"})
+		common.ApiErrorT(c, "Passkey authentication is disabled.")
 		return
 	}
 	user, err := getAuthenticatedUser(c)
@@ -122,7 +122,7 @@ func PasskeyRegisterBegin(c *gin.Context) {
 	}
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
-		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		common.ApiErrorT(c, "The current sign-in method does not support security verification")
 		return
 	}
 	flowToken, expiresAt, err := passkeysvc.CreateSessionDataFlow(
@@ -147,7 +147,7 @@ func PasskeyRegisterBegin(c *gin.Context) {
 
 func PasskeyRegisterFinish(c *gin.Context) {
 	if !system_setting.PasskeySettingsSnapshot().Enabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "管理员未启用 Passkey 登录"})
+		common.ApiErrorT(c, "Passkey authentication is disabled.")
 		return
 	}
 	user, err := getAuthenticatedUser(c)
@@ -157,7 +157,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 	}
 	request, err := parsePasskeyFinishRequest(c)
 	if err != nil {
-		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		common.ApiErrorT(c, "Invalid Passkey verification request")
 		return
 	}
 	parsedCredential, err := protocol.ParseCredentialCreationResponseBytes(request.Credential)
@@ -172,7 +172,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 	}
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
-		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		common.ApiErrorT(c, "The current sign-in method does not support security verification")
 		return
 	}
 	sessionData, security, err := passkeysvc.PopSessionDataFlow(
@@ -211,7 +211,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 	}
 	passkeyCredential := model.NewPasskeyCredentialFromWebAuthn(user.Id, credential)
 	if passkeyCredential == nil {
-		common.ApiErrorMsg(c, "无法创建 Passkey 凭证")
+		common.ApiErrorT(c, "Unable to create the Passkey credential")
 		return
 	}
 	passkeyCredential.Name = name
@@ -226,11 +226,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 		return
 	}
 	recordUserSecurityAudit(c, user.Id, "user.passkey_register", map[string]any{"passkey_id": passkeyCredential.ID, "name": passkeyCredential.Name})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Passkey 注册成功",
-		"data":    authRotationData(bundle),
-	})
+	common.ApiSuccessT(c, "Passkey registered successfully", authRotationData(bundle))
 }
 
 func PasskeyDelete(c *gin.Context) {
@@ -259,7 +255,7 @@ func PasskeyDelete(c *gin.Context) {
 	}
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
-		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		common.ApiErrorT(c, "The current sign-in method does not support security verification")
 		return
 	}
 	if err := model.DeletePasskeyForSession(identity, passkeyID); err != nil {
@@ -272,11 +268,7 @@ func PasskeyDelete(c *gin.Context) {
 		return
 	}
 	recordUserSecurityAudit(c, user.Id, "user.passkey_delete", map[string]any{"passkey_id": credential.ID, "name": credential.Name})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Passkey 已删除",
-		"data":    authRotationData(bundle),
-	})
+	common.ApiSuccessT(c, "Passkey removed successfully", authRotationData(bundle))
 }
 
 func PasskeyRename(c *gin.Context) {
@@ -361,10 +353,7 @@ func PasskeyStatus(c *gin.Context) {
 
 func PasskeyLoginBegin(c *gin.Context) {
 	if !system_setting.PasskeySettingsSnapshot().Enabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未启用 Passkey 登录",
-		})
+		common.ApiErrorT(c, "Passkey authentication is disabled.")
 		return
 	}
 
@@ -373,7 +362,7 @@ func PasskeyLoginBegin(c *gin.Context) {
 	}
 	if c.Request.Body != nil && c.Request.ContentLength != 0 {
 		if common.DecodeJson(c.Request.Body, &request) != nil {
-			common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+			common.ApiErrorT(c, "Invalid Passkey verification request")
 			return
 		}
 	}
@@ -413,16 +402,13 @@ func PasskeyLoginBegin(c *gin.Context) {
 
 func PasskeyLoginFinish(c *gin.Context) {
 	if !system_setting.PasskeySettingsSnapshot().Enabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未启用 Passkey 登录",
-		})
+		common.ApiErrorT(c, "Passkey authentication is disabled.")
 		return
 	}
 
 	request, err := parsePasskeyFinishRequest(c)
 	if err != nil {
-		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		common.ApiErrorT(c, "Invalid Passkey verification request")
 		return
 	}
 	parsedCredential, err := protocol.ParseCredentialRequestResponseBytes(request.Credential)
@@ -455,7 +441,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 		// 首先通过凭证ID查找用户
 		credential, err := model.GetPasskeyByCredentialID(rawID)
 		if err != nil {
-			return nil, fmt.Errorf("未找到 Passkey 凭证: %w", err)
+			return nil, fmt.Errorf("passkey credential not found: %w", err)
 		}
 
 		if credential.RPID != nil && *credential.RPID != "" && *credential.RPID != sessionData.RelyingPartyID {
@@ -465,7 +451,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 		// 通过凭证获取用户
 		user := &model.User{Id: credential.UserID}
 		if err := user.FillUserById(); err != nil {
-			return nil, fmt.Errorf("用户信息获取失败: %w", err)
+			return nil, fmt.Errorf("failed to load the passkey user: %w", err)
 		}
 
 		if user.Status != common.UserStatusEnabled {
@@ -476,9 +462,9 @@ func PasskeyLoginFinish(c *gin.Context) {
 			userID, parseErr := strconv.Atoi(string(userHandle))
 			if parseErr != nil {
 				// 记录异常但继续验证，因为某些客户端可能使用非数字格式
-				common.SysLog(fmt.Sprintf("PasskeyLogin: userHandle parse error for credential, length: %d", len(userHandle)))
+				common.SysLog(common.LogText("PasskeyLogin: userHandle parse error for credential, length: %d", len(userHandle)))
 			} else if userID != user.Id {
-				return nil, errors.New("用户句柄与凭证不匹配")
+				return nil, errors.New("user handle does not match the credential")
 			}
 		}
 
@@ -493,18 +479,18 @@ func PasskeyLoginFinish(c *gin.Context) {
 
 	userWrapper, ok := waUser.(*passkeysvc.WebAuthnUser)
 	if !ok {
-		common.ApiErrorMsg(c, "Passkey 登录状态异常")
+		common.ApiErrorT(c, "Invalid Passkey login state")
 		return
 	}
 
 	modelUser := userWrapper.ModelUser()
 	if modelUser == nil {
-		common.ApiErrorMsg(c, "Passkey 登录状态异常")
+		common.ApiErrorT(c, "Invalid Passkey login state")
 		return
 	}
 
 	if modelUser.Status != common.UserStatusEnabled {
-		common.ApiErrorMsg(c, "该用户已被禁用")
+		common.ApiErrorT(c, "This user account is disabled.")
 		return
 	}
 
@@ -520,7 +506,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 func AdminResetPasskey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiErrorMsg(c, "无效的用户 ID")
+		common.ApiErrorT(c, "Invalid user ID")
 		return
 	}
 
@@ -566,15 +552,12 @@ func AdminResetPasskey(c *gin.Context) {
 		"id":                  user.Id,
 		"verification_method": authorization.Method,
 	})
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Passkey 已重置",
-	})
+	common.ApiSuccessT(c, "Passkey reset successfully", nil)
 }
 
 func PasskeyVerifyBegin(c *gin.Context) {
 	if !system_setting.PasskeySettingsSnapshot().Enabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "管理员未启用 Passkey 登录"})
+		common.ApiErrorT(c, "Passkey authentication is disabled.")
 		return
 	}
 	user, err := getAuthenticatedUser(c)
@@ -584,7 +567,7 @@ func PasskeyVerifyBegin(c *gin.Context) {
 	}
 	var request passkeyVerifyBeginRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
-		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		common.ApiErrorT(c, "Invalid Passkey verification request")
 		return
 	}
 	binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: request.Scope, Context: request.Context})
@@ -640,7 +623,7 @@ func PasskeyVerifyBegin(c *gin.Context) {
 
 func PasskeyVerifyFinish(c *gin.Context) {
 	if !system_setting.PasskeySettingsSnapshot().Enabled {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "管理员未启用 Passkey 登录"})
+		common.ApiErrorT(c, "Passkey authentication is disabled.")
 		return
 	}
 	user, err := getAuthenticatedUser(c)
@@ -650,7 +633,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 	}
 	request, err := parsePasskeyFinishRequest(c)
 	if err != nil {
-		common.ApiErrorMsg(c, "无效的 Passkey 验证请求")
+		common.ApiErrorT(c, "Invalid Passkey verification request")
 		return
 	}
 	parsedCredential, err := protocol.ParseCredentialRequestResponseBytes(request.Credential)
@@ -665,7 +648,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 	}
 	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
-		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
+		common.ApiErrorT(c, "The current sign-in method does not support security verification")
 		return
 	}
 	sessionData, security, err := passkeysvc.PopSessionDataFlow(

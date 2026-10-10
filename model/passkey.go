@@ -27,6 +27,7 @@ var (
 	ErrPasskeyLimitReached     = errors.New("\u6bcf\u4e2a\u7528\u6237\u6700\u591a\u53ef\u4ee5\u7ed1\u5b9a 16 \u4e2a Passkey")
 	ErrPasskeyNameInvalid      = errors.New("Passkey \u540d\u79f0\u5fc5\u987b\u4e3a 1 \u5230 64 \u4e2a\u5b57\u7b26")
 	ErrPasskeyCredentialExists = errors.New("\u8be5 Passkey \u5df2\u7ed1\u5b9a")
+	ErrFriendlyPasskeyNotFound = errors.New("Passkey verification failed. Please try again or contact the administrator.")
 )
 
 type PasskeyCredential struct {

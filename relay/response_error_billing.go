@@ -36,7 +36,7 @@ func settleBillingForResponseParseError(c *gin.Context, info *relaycommon.RelayI
 		info.OriginModelName = originModelName
 		info.PriceData = originPriceData
 	} else if shouldUseAudioBillingForResponseError(info, usageDto) {
-		service.PostAudioConsumeQuota(c, info, usageDto, "")
+		service.PostAudioConsumeQuota(c, info, usageDto, nil)
 	} else {
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
