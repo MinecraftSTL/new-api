@@ -4901,6 +4901,7 @@
     "Resend in {{seconds}}s": "Resend in {{seconds}}s",
     "Reserve requested images; settle returned images.": "Reserve requested images; settle returned images.",
     "Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.": "Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.",
+    "Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.": "Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.",
     "Reserved for viewing complete channel keys after secure verification.": "Reserved for viewing complete channel keys after secure verification.",
     "Reset": "Reset",
     "Reset 2FA": "Reset 2FA",

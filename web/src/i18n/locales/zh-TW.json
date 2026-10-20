@@ -4901,6 +4901,7 @@
     "Resend in {{seconds}}s": "{{seconds}} 秒後重送",
     "Reserve requested images; settle returned images.": "按請求數量預扣，按實際傳回數量結算。",
     "Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.": "按預估輸入費用乘以此倍率預扣，不預估輸出 token。預設為 1，支援 0.5、1.5 等正小數。最終按實際用量結算，按次和任務計費不受影響。",
+    "Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.": "按預計輸入費用乘以此倍率預扣。最終按實際用量結算，按次和任務計費不受影響。",
     "Reserved for viewing complete channel keys after secure verification.": "預留用於在安全驗證後查看完整渠道金鑰。",
     "Reset": "重置",
     "Reset 2FA": "重置 2FA",
