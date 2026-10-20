@@ -36,6 +36,8 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 			meta.MaxTokens = int(lo.FromPtr(request.MaxOutputTokens))
 		case *dto.ClaudeRequest:
 			meta.MaxTokens = int(lo.FromPtr(request.MaxTokens))
+		case *dto.GeminiChatRequest:
+			meta.MaxTokens = int(lo.FromPtr(request.GenerationConfig.MaxOutputTokens))
 		case *dto.ImageRequest:
 			meta = request.GetTokenCountMeta()
 		}

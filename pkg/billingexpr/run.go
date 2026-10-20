@@ -50,7 +50,34 @@ func RunExprByHashWithRequest(exprStr, hash string, params TokenParams, request 
 	return runProgram(entry.prog, entry.requestRules, entry.usedVars, params, request)
 }
 
+// EstimatePreConsumeByHashWithRequest scales only the input-only token cost.
+// Fixed request branches are reserved unchanged, including branch transitions.
+func EstimatePreConsumeByHashWithRequest(exprStr, hash string, params TokenParams, request RequestInput, multiplier float64) (float64, TraceResult, error) {
+	entry, err := compileEntryFromCacheByHash(exprStr, hash)
+	if err != nil {
+		return 0, TraceResult{}, err
+	}
+	now := time.Now()
+	cost, trace, err := runProgramAt(entry.prog, entry.requestRules, entry.usedVars, params, request, now)
+	if err != nil || trace.BillingUnit == BillingUnitRequest || multiplier == 1 {
+		return cost, trace, err
+	}
+	params.C = 0
+	inputCost, inputTrace, err := runProgramAt(entry.prog, entry.requestRules, entry.usedVars, params, request, now)
+	if err != nil {
+		return 0, trace, err
+	}
+	if inputTrace.BillingUnit == BillingUnitRequest {
+		return cost, trace, nil
+	}
+	return cost + (multiplier-1)*inputCost, trace, nil
+}
+
 func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[string]bool, params TokenParams, request RequestInput) (float64, TraceResult, error) {
+	return runProgramAt(prog, requestRules, usedVars, params, request, time.Now())
+}
+
+func runProgramAt(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[string]bool, params TokenParams, request RequestInput, now time.Time) (float64, TraceResult, error) {
 	trace := TraceResult{
 		BillingUnit:  BillingUnitToken,
 		RequestRules: append([]RequestRuleTrace(nil), requestRules...),
@@ -134,11 +161,11 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 			}
 			return strings.Contains(fmt.Sprint(source), substr)
 		},
-		"hour":    func(tz string) int { return timeInZone(tz).Hour() },
-		"minute":  func(tz string) int { return timeInZone(tz).Minute() },
-		"weekday": func(tz string) int { return int(timeInZone(tz).Weekday()) },
-		"month":   func(tz string) int { return int(timeInZone(tz).Month()) },
-		"day":     func(tz string) int { return timeInZone(tz).Day() },
+		"hour":    func(tz string) int { return timeInZone(tz, now).Hour() },
+		"minute":  func(tz string) int { return timeInZone(tz, now).Minute() },
+		"weekday": func(tz string) int { return int(timeInZone(tz, now).Weekday()) },
+		"month":   func(tz string) int { return int(timeInZone(tz, now).Month()) },
+		"day":     func(tz string) int { return timeInZone(tz, now).Day() },
 		"max":     math.Max,
 		"min":     math.Min,
 		"abs":     math.Abs,
@@ -157,16 +184,16 @@ func runProgram(prog *vm.Program, requestRules []RequestRuleTrace, usedVars map[
 	return f, trace, nil
 }
 
-func timeInZone(tz string) time.Time {
+func timeInZone(tz string, now time.Time) time.Time {
 	tz = strings.TrimSpace(tz)
 	if tz == "" {
-		return time.Now().UTC()
+		return now.UTC()
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
-		return time.Now().UTC()
+		return now.UTC()
 	}
-	return time.Now().In(loc)
+	return now.In(loc)
 }
 
 func normalizeHeaders(headers map[string]string) map[string]string {

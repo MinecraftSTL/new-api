@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/config"
 )
 
@@ -32,6 +33,13 @@ func GetQuotaSetting() *QuotaSetting {
 
 // ValidateQuotaOption validates reservation settings before they are persisted.
 func ValidateQuotaOption(key, value string) error {
+	if key == "PreConsumedQuota" {
+		number, err := strconv.Atoi(value)
+		if err != nil || number < 0 || number > constant.MaxTokensLimit {
+			return fmt.Errorf("%s must be a finite non-negative number", key)
+		}
+		return nil
+	}
 	if key != "quota_setting.trust_quota_usd" && key != "quota_setting.pre_consume_multiplier" {
 		return nil
 	}
