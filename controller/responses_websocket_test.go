@@ -815,8 +815,8 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			preConsumed := make(chan int, 1)
 			tokenID := make(chan int, 1)
-			// Pre-consume no longer estimates completion tokens, so an output-priced expression reserves nothing to refund.
-			fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
+			// Reserve the requested output limit even when local input counting is disabled.
+			fixture := newResponsesWSBillingTest(t, `tier("output", c * 200)`, func(ws *websocket.Conn, _ *http.Request) {
 				if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
 					return
 				}

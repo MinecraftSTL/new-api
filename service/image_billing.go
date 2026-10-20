@@ -33,16 +33,17 @@ func PrepareImageBillingForRequest(c *gin.Context, info *relaycommon.RelayInfo, 
 			request = *info.BillingRequestInput
 		}
 		request.ImageCount = &count
-		cost, trace, runErr := billingexpr.RunExprByHashWithRequest(snap.ExprString, snap.ExprHash, billingexpr.TokenParams{
+		multiplier := snap.PreConsumeMultiplier
+		if multiplier == 0 {
+			multiplier = 1
+		}
+		cost, trace, runErr := billingexpr.EstimatePreConsumeByHashWithRequest(snap.ExprString, snap.ExprHash, billingexpr.TokenParams{
 			P: float64(snap.EstimatedPromptTokens), C: float64(snap.EstimatedCompletionTokens), Len: float64(snap.EstimatedPromptTokens),
-		}, request)
+		}, request, multiplier)
 		if runErr != nil {
 			return types.NewErrorWithStatusCode(runErr, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 		beforeGroup := cost / 1_000_000 * snap.QuotaPerUnit
-		if trace.BillingUnit != billingexpr.BillingUnitRequest && snap.PreConsumeMultiplier != 0 {
-			beforeGroup *= snap.PreConsumeMultiplier
-		}
 		quota, err = billingexpr.QuotaRoundStrict(beforeGroup * info.PriceData.GroupRatioInfo.GroupRatio)
 		if err == nil {
 			snap.EstimatedImageCount = trace.ImageCount

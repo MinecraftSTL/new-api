@@ -4901,6 +4901,7 @@
     "Resend in {{seconds}}s": "Повторная отправка через {{seconds}} с",
     "Reserve requested images; settle returned images.": "Резервирование по запрошенному количеству, расчёт — по полученному.",
     "Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.": "Резервируется оценочная стоимость ввода, умноженная на это значение, без оценки выходных токенов. По умолчанию 1; допустимы положительные дроби, например 0,5 и 1,5. Итоговая плата зависит от фактического использования. Тарифы за запрос и за задачу не меняются.",
+    "Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.": "Резервировать предполагаемую стоимость ввода, умноженную на это значение. Итоговое списание рассчитывается по фактическому использованию. Тарифы за запрос и за задачу не меняются.",
     "Reserved for viewing complete channel keys after secure verification.": "Зарезервировано для просмотра полных ключей каналов после безопасной проверки.",
     "Reset": "Сброс",
     "Reset 2FA": "Сбросить 2FA",

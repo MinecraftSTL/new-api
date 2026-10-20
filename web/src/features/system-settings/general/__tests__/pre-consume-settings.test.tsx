@@ -23,7 +23,13 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -33,7 +39,7 @@ import { api } from '@/lib/api'
 import { SettingsPageProvider } from '../../components/settings-page-context'
 import { QuotaSettingsSection } from '../quota-settings-section'
 
-function Fixture() {
+function Fixture(props: { preConsumedQuota: number }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
   return (
     <>
@@ -41,6 +47,7 @@ function Fixture() {
       <SettingsPageProvider actionsContainer={container}>
         <QuotaSettingsSection
           defaultValues={{
+            PreConsumedQuota: props.preConsumedQuota,
             QuotaForNewUser: 0,
             QuotaForInviter: 0,
             QuotaForInvitee: 0,
@@ -57,12 +64,14 @@ function Fixture() {
   )
 }
 
-async function renderSettings() {
+async function renderSettings(preConsumedQuota = 500) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const router = createRouter({
-    routeTree: createRootRoute({ component: Fixture }),
+    routeTree: createRootRoute({
+      component: () => <Fixture preConsumedQuota={preConsumedQuota} />,
+    }),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   render(
@@ -139,6 +148,48 @@ test.each(['', '-1'])(
     const input = screen.getByRole('spinbutton', {
       name: 'Wallet pre-consume bypass threshold (USD)',
     })
+    fireEvent.change(input, { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(api.put).not.toHaveBeenCalled()
+  }
+)
+
+test.each(['0', '120', '1073741823'])(
+  'assumed output tokens %s preserves the legacy option key',
+  async (value) => {
+    await renderSettings()
+    const input = screen.getByRole('spinbutton', { name: 'Pre-Consumed Quota' })
+    expect(input).toHaveValue(500)
+    expect(
+      screen.getByText('Quota consumed before charging users')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.'
+      )
+    ).toBeInTheDocument()
+    fireEvent.change(input, { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/option/', {
+        key: 'PreConsumedQuota',
+        value: Number(value),
+      })
+    )
+    cleanup()
+    await renderSettings(Number(value))
+    expect(
+      screen.getByRole('spinbutton', { name: 'Pre-Consumed Quota' })
+    ).toHaveValue(Number(value))
+  }
+)
+
+test.each(['', '-1', '0.5', '1073741824'])(
+  'invalid assumed output tokens "%s" prevents saving',
+  async (value) => {
+    await renderSettings()
+    const input = screen.getByRole('spinbutton', { name: 'Pre-Consumed Quota' })
     fireEvent.change(input, { target: { value } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))

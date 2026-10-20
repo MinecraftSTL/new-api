@@ -4901,6 +4901,7 @@
     "Resend in {{seconds}}s": "{{seconds}}秒後に再送信",
     "Reserve requested images; settle returned images.": "リクエストした枚数で仮課金し、返された枚数で精算します。",
     "Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.": "推定入力料金にこの倍率を掛けた額を確保し、出力トークンは推定しません。既定値は 1 で、0.5 や 1.5 などの正の小数を指定できます。最終料金は実際の使用量で精算します。リクエスト単位とタスクの料金には影響しません。",
+    "Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.": "推定入力料金にこの倍率を掛けた額を事前確保します。最終料金は実際の使用量に基づいて精算されます。リクエスト単位およびタスク単位の料金には影響しません。",
     "Reserved for viewing complete channel keys after secure verification.": "安全な検証後に完全なチャンネルキーを表示するために予約されています。",
     "Reset": "リセット",
     "Reset 2FA": "2FAをリセット",

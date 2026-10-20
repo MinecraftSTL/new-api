@@ -5,6 +5,10 @@ var DifyDebug bool
 var MaxFileDownloadMB int
 var StreamScannerMaxBufferMB int
 var ForceStreamOption bool
+
+// MaxTokensLimit bounds request and configured token quantities before billing.
+const MaxTokensLimit = 1<<30 - 1
+
 var CountToken bool
 var GetMediaToken bool
 var GetMediaTokenNotStream bool

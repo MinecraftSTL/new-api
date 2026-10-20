@@ -9,8 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -191,6 +193,9 @@ export function parseTaskResult() { return {}; }
 // Covers configuration persistence, validation, reservation and reconciliation
 // through the same public entry points used by the relay.
 func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	previousOutput := common.PreConsumedQuota
+	t.Cleanup(func() { common.PreConsumedQuota = previousOutput })
 	previousConfig := config.GlobalConfig.ExportAllConfigs()
 	previousUnit, previousBatch := common.QuotaPerUnit, common.BatchUpdateEnabled
 	common.QuotaPerUnit, common.BatchUpdateEnabled = 500000, false
@@ -206,6 +211,7 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 			db := modelManagementDB(t, dialect.kind, os.Getenv(dialect.env))
 			require.NoError(t, db.AutoMigrate(&model.Token{}))
 			for key, value := range map[string]string{
+				"PreConsumedQuota":                     "120",
 				"quota_setting.trust_quota_usd":        "10.5",
 				"quota_setting.pre_consume_multiplier": "1.5",
 			} {
@@ -223,9 +229,11 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 				stored[option.Key] = option.Value
 			}
 			for range 2 {
+				common.PreConsumedQuota = 500
 				operation_setting.GetQuotaSetting().TrustQuotaUSD = 10
 				operation_setting.GetQuotaSetting().PreConsumeMultiplier = 1
-				require.NoError(t, config.GlobalConfig.LoadFromDB(stored))
+				model.InitOptionMap()
+				assert.Equal(t, 120, common.PreConsumedQuota)
 				assert.Equal(t, 10.5, operation_setting.GetQuotaSetting().TrustQuotaUSD)
 				assert.Equal(t, 1.5, operation_setting.GetQuotaSetting().PreConsumeMultiplier)
 			}
@@ -243,6 +251,15 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 				require.NoError(t, db.Where(&model.Option{Key: key}).First(&saved).Error)
 				assert.Equal(t, stored[key], saved.Value, "invalid saves must preserve the previous value")
 			}
+			for _, value := range []string{"-1", "0.5", "NaN", "Inf", "", "1073741824", "999999999999999999999"} {
+				var response struct{ Success bool }
+				modelManagementRequest(t, UpdateOption, http.MethodPut, "/api/option/", OptionUpdateRequest{Key: "PreConsumedQuota", Value: value}, &response)
+				assert.False(t, response.Success)
+				var saved model.Option
+				require.NoError(t, db.Where(&model.Option{Key: "PreConsumedQuota"}).First(&saved).Error)
+				assert.Equal(t, "120", saved.Value)
+				assert.Equal(t, 120, common.PreConsumedQuota)
+			}
 			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 				"billing_setting.billing_mode":    `{"policy-model":"tiered_expr"}`,
 				"billing_setting.billing_expr":    `{"policy-model":"tier(\"base\", p * 3 + c * 15)"}`,
@@ -254,17 +271,23 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 				wallet, token         int
 				force, unlimited      bool
 				wantHeld              int
+				outcome               string
+				limit                 int
 			}{
-				{"above threshold", 10, 1, 5500000, 5500000, false, false, 0},
-				{"custom threshold", 20, 1, 5500000, 5500000, false, false, 1500},
-				{"zero disables bypass", 0, 1, 5500000, 5500000, false, false, 1500},
-				{"wallet equals threshold", 10, 1, 5000000, 5500000, false, false, 1500},
-				{"token equals threshold", 10, 1, 5500000, 5000000, false, false, 1500},
-				{"fractional threshold", 10.5, 1, 5250001, 5250001, false, false, 0},
-				{"unlimited token", 10, 1, 5500000, 0, false, true, 0},
-				{"forced reservation", 10, 1, 5500000, 5500000, true, false, 1500},
-				{"half input cost", 0, 0.5, 100000, 100000, false, false, 750},
-				{"fractional multiple refunds excess", 0, 2.5, 100000, 100000, false, false, 3750},
+				{"above threshold", 10, 1, 5500000, 5500000, false, false, 0, "settle", 10000},
+				{"custom threshold", 20, 1, 5500000, 5500000, false, false, 76500, "settle", 10000},
+				{"zero disables bypass", 0, 1, 5500000, 5500000, false, false, 76500, "settle", 10000},
+				{"wallet equals threshold", 10, 1, 5000000, 5500000, false, false, 76500, "settle", 10000},
+				{"token equals threshold", 10, 1, 5500000, 5000000, false, false, 76500, "settle", 10000},
+				{"fractional threshold", 10.5, 1, 5250001, 5250001, false, false, 0, "settle", 10000},
+				{"unlimited token", 10, 1, 5500000, 0, false, true, 0, "settle", 10000},
+				{"forced reservation", 10, 1, 5500000, 5500000, true, false, 76500, "settle", 10000},
+				{"half input cost", 0, 0.5, 100000, 100000, false, false, 75750, "settle", 10000},
+				{"fractional multiple refunds excess", 0, 2.5, 100000, 100000, false, false, 78750, "settle", 10000},
+				{"wallet insufficient", 0, 1, 1000, 100000, false, false, 0, "reject", 10000},
+				{"token insufficient", 0, 1, 100000, 1000, false, false, 0, "reject", 10000},
+				{"failure refunds reservation", 0, 1, 100000, 100000, false, false, 76500, "refund", 10000},
+				{"actual output exceeds estimate", 0, 1, 100000, 100000, false, false, 1508, "settle", 1},
 			}
 			for i, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
@@ -279,15 +302,35 @@ func TestPreConsumePolicyDatabaseMatrix(t *testing.T) {
 					ctx.Set("token_quota", tc.token)
 					info := &relaycommon.RelayInfo{UserId: user.Id, TokenId: token.Id, TokenKey: token.Key, TokenUnlimited: tc.unlimited, ForcePreConsume: tc.force, OriginModelName: "policy-model", UserGroup: "default", UsingGroup: "default", BillingRequestInput: &billingexpr.RequestInput{}}
 					info.UserSetting.BillingPreference = "wallet_only"
-					price, err := helper.ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{MaxTokens: 10000})
+					price, err := helper.ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{MaxTokens: tc.limit})
 					require.NoError(t, err)
-					require.Nil(t, service.PreConsumeBilling(ctx, price.QuotaToPreConsume, info))
+					apiErr := service.PreConsumeBilling(ctx, price.QuotaToPreConsume, info)
+					if tc.outcome == "reject" {
+						require.NotNil(t, apiErr)
+						require.NoError(t, db.First(&user, user.Id).Error)
+						require.NoError(t, db.First(&token, token.Id).Error)
+						assert.Equal(t, tc.wallet, user.Quota)
+						assert.Equal(t, tc.token, token.RemainQuota)
+						return
+					}
+					require.Nil(t, apiErr)
 					assert.Equal(t, tc.wantHeld, info.FinalPreConsumedQuota)
 					require.NoError(t, db.First(&user, user.Id).Error)
 					assert.Equal(t, tc.wallet-tc.wantHeld, user.Quota)
 					if !tc.unlimited {
 						require.NoError(t, db.First(&token, token.Id).Error)
 						assert.Equal(t, tc.token-tc.wantHeld, token.RemainQuota)
+					}
+					if tc.outcome == "refund" {
+						info.Billing.Refund(ctx)
+						info.Billing.Refund(ctx)
+						require.EventuallyWithT(t, func(collect *assert.CollectT) {
+							if assert.NoError(collect, db.First(&user, user.Id).Error) && assert.NoError(collect, db.First(&token, token.Id).Error) {
+								assert.Equal(collect, tc.wallet, user.Quota)
+								assert.Equal(collect, tc.token, token.RemainQuota)
+							}
+						}, 5*time.Second, 10*time.Millisecond)
+						return
 					}
 					_, actual, _ := service.TryTieredSettle(info, billingexpr.TokenParams{P: 1000, C: 100, Len: 1000})
 					assert.Equal(t, 2250, actual)

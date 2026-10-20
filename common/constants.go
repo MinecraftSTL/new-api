@@ -135,8 +135,7 @@ var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false
 var QuotaRemindThreshold = 1000
 
-// PreConsumedQuota is retained for old option clients; token reservations now
-// use quota_setting.pre_consume_multiplier and the estimated input cost.
+// PreConsumedQuota is the assumed output token count when no positive request limit is supplied.
 var PreConsumedQuota = 500
 
 var RetryTimes = 0

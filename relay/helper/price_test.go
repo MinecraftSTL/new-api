@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -113,6 +115,9 @@ func TestFixedPricePreConsumeAndRealtimeRejection(t *testing.T) {
 
 func TestModelPriceHelperTieredInputPreConsumeMultiplier(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	previousOutput := common.PreConsumedQuota
+	common.PreConsumedQuota = 500
+	t.Cleanup(func() { common.PreConsumedQuota = previousOutput })
 
 	saved := map[string]string{}
 	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
@@ -137,12 +142,12 @@ func TestModelPriceHelperTieredInputPreConsumeMultiplier(t *testing.T) {
 		multiplier float64
 		expected   int
 	}{
-		{"default uses only input", "default", 1000, 0, 1, 1500},
-		{"explicit output limit does not increase reservation", "default", 1000, 100, 1, 1500},
-		{"fraction below one", "default", 1000, 0, 0.5, 750},
-		{"fraction above one preserves context tier", "default", 1000, 0, 2.5, 3750},
-		{"small input has no token floor", "default", 100, 0, 1, 150},
-		{"zero input", "default", 0, 100, 1, 0},
+		{"default reserves configured output", "default", 1000, 0, 1, 5250},
+		{"explicit output limit takes priority", "default", 1000, 100, 1, 2250},
+		{"fraction below one", "default", 1000, 0, 0.5, 4500},
+		{"fraction above one preserves context tier", "default", 1000, 0, 2.5, 7500},
+		{"small input has no token floor", "default", 100, 0, 1, 3900},
+		{"zero input", "default", 0, 100, 1, 750},
 		{"free group", "free", 1000, 0, 2.5, 0},
 	}
 
@@ -258,7 +263,7 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 		{
 			name:         "ratio price ignores request billing ratios",
 			model:        "ratio-image-price",
-			wantQuota:    15000,
+			wantQuota:    22500,
 			wantUsePrice: false,
 		},
 	}
@@ -711,9 +716,9 @@ func TestInputPreConsumeMultiplierLegacyAndRequestPrices(t *testing.T) {
 		multiplier   float64
 		prompt, want int
 	}{
-		{"legacy-input-policy", 0.5, 100, 75},
-		{"legacy-input-policy", 2.5, 100, 375},
-		{"legacy-input-policy", 1, 0, 0},
+		{"legacy-input-policy", 0.5, 100, 15075},
+		{"legacy-input-policy", 2.5, 100, 15375},
+		{"legacy-input-policy", 1, 0, 15000},
 		{"request-input-policy", 2.5, 100, 5000},
 		{"fixed-input-policy", 2.5, 100, 5000},
 		{"image-input-policy", 2.5, 100, 375},
@@ -745,3 +750,100 @@ func (s *priceTestReservation) Refund(*gin.Context)      {}
 func (s *priceTestReservation) NeedsRefund() bool        { return false }
 func (s *priceTestReservation) GetPreConsumedQuota() int { return s.held }
 func (s *priceTestReservation) Reserve(quota int) error  { s.held = max(s.held, quota); return nil }
+
+func TestOutputTokenReservation(t *testing.T) {
+	previous := config.GlobalConfig.ExportAllConfigs()
+	oldOutput := common.PreConsumedQuota
+	oldRatios, oldPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	oldCompletion := ratio_setting.CompletionRatio2JSONString()
+	t.Cleanup(func() {
+		common.PreConsumedQuota = oldOutput
+		require.NoError(t, config.GlobalConfig.LoadFromDB(previous))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices))
+		require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(oldCompletion))
+	})
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"output-reserve":1.5}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":    `{"output-expr":"tiered_expr"}`,
+		"billing_setting.billing_expr":    `{"output-expr":"tier(\"base\", p * 3 + c * 15) * (header(\"mode\") == \"fast\" ? 2 : 1)"}`,
+		"group_ratio_setting.group_ratio": `{"default":1}`,
+	}))
+	cases := []struct {
+		name, model               string
+		configured, limit, prompt int
+		multiplier, completion    float64
+		mode                      int
+		want                      int
+		invalid                   bool
+	}{
+		{"default", "output-reserve", 500, 0, 100, 1, 5, 0, 3900, false},
+		{"custom fallback", "output-reserve", 120, 0, 100, 1, 5, 0, 1050, false},
+		{"request wins", "output-reserve", 500, 10, 100, 2.5, 5, 0, 450, false},
+		{"zero fallback", "output-reserve", 0, 0, 100, 1, 5, 0, 150, false},
+		{"zero fallback with explicit limit", "output-reserve", 0, 10, 100, 1, 5, 0, 225, false},
+		{"fractional input multiplier", "output-reserve", 500, 10, 100, 0.5, 5, 0, 150, false},
+		{"free output", "output-reserve", 500, 0, 100, 2, 0, 0, 300, false},
+		{"no input floor", "output-reserve", 500, 0, 0, 1, 5, 0, 3750, false},
+		{"embedding", "output-reserve", 500, 10, 100, 1, 5, relayconstant.RelayModeEmbeddings, 150, false},
+		{"expression request multiplier once", "output-expr", 500, 100, 1000, 2.5, 5, 0, 9000, false},
+		{"invalid fallback", "output-reserve", -1, 0, 100, 1, 5, 0, 0, true},
+		{"oversized fallback", "output-expr", constant.MaxTokensLimit + 1, 0, 100, 1, 5, 0, 0, true},
+		{"overflow output charge", "output-reserve", 500, constant.MaxTokensLimit, 100, 1, 5, 0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			common.PreConsumedQuota = tc.configured
+			operation_setting.GetQuotaSetting().PreConsumeMultiplier = tc.multiplier
+			encoded, err := common.Marshal(map[string]float64{"output-reserve": tc.completion})
+			require.NoError(t, err)
+			require.NoError(t, ratio_setting.UpdateCompletionRatioByJSONString(string(encoded)))
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			info := &relaycommon.RelayInfo{OriginModelName: tc.model, UserGroup: "default", UsingGroup: "default", RelayMode: tc.mode, BillingRequestInput: &billingexpr.RequestInput{Headers: map[string]string{"mode": "fast"}}}
+			price, err := ModelPriceHelper(ctx, info, tc.prompt, &types.TokenCountMeta{MaxTokens: tc.limit})
+			if tc.invalid {
+				require.Error(t, err)
+				assert.Nil(t, info.Billing)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, price.QuotaToPreConsume)
+		})
+	}
+}
+
+func TestExpressionOutputReservationBranchesAndImageRetry(t *testing.T) {
+	previous := config.GlobalConfig.ExportAllConfigs()
+	t.Cleanup(func() { require.NoError(t, config.GlobalConfig.LoadFromDB(previous)) })
+	for _, tc := range []struct {
+		name, expression string
+		want             int
+	}{
+		{"token", `tier("base", p * 3 + c * 15) * image_count`, 4500},
+		{"fixed", `tier("request", fixed(0.01)) * image_count`, 5000},
+		{"fixed to token", `c == 0 ? tier("request", fixed(0.01)) : tier("tokens", p * 3 + c * 15)`, 2250},
+		{"token to fixed", `c > 0 ? tier("request", fixed(0.01)) : tier("tokens", p * 3 + c * 15)`, 5000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := common.Marshal(map[string]string{"retry-output": tc.expression})
+			require.NoError(t, err)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"billing_setting.billing_mode": `{"retry-output":"tiered_expr"}`, "billing_setting.billing_expr": string(encoded), "group_ratio_setting.group_ratio": `{"default":1}`}))
+			operation_setting.GetQuotaSetting().PreConsumeMultiplier = 2.5
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			info := &relaycommon.RelayInfo{OriginModelName: "retry-output", UserGroup: "default", UsingGroup: "default", BillingRequestInput: &billingexpr.RequestInput{}}
+			price, err := ModelPriceHelper(ctx, info, 1000, &types.TokenCountMeta{MaxTokens: 100})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, price.QuotaToPreConsume)
+			assert.Equal(t, 100, info.TieredBillingSnapshot.EstimatedCompletionTokens)
+			if tc.name == "token" || tc.name == "fixed" {
+				reservation := &priceTestReservation{held: price.QuotaToPreConsume}
+				info.Billing = reservation
+				operation_setting.GetQuotaSetting().PreConsumeMultiplier = 10
+				require.Nil(t, service.PrepareImageBillingForRequest(ctx, info, 2))
+				assert.Equal(t, 2*tc.want, reservation.held)
+			}
+		})
+	}
+}

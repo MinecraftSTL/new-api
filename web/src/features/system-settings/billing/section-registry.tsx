@@ -60,6 +60,7 @@ const BILLING_SECTIONS = [
     build: (settings: BillingSettings) => (
       <QuotaSettingsSection
         defaultValues={{
+          PreConsumedQuota: settings.PreConsumedQuota,
           QuotaForNewUser: settings.QuotaForNewUser,
           QuotaForInviter: settings.QuotaForInviter,
           QuotaForInvitee: settings.QuotaForInvitee,

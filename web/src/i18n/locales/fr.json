@@ -4901,6 +4901,7 @@
     "Resend in {{seconds}}s": "Renvoyer dans {{seconds}} s",
     "Reserve requested images; settle returned images.": "Réserver le montant demandé, puis facturer les images reçues.",
     "Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.": "Réserve le coût estimé des entrées multiplié par cette valeur, sans estimer les tokens de sortie. Valeur par défaut : 1. Les décimales positives, comme 0,5 et 1,5, sont acceptées. La facturation finale utilise la consommation réelle. Les tarifs par requête et par tâche restent inchangés.",
+    "Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.": "Réserver le coût d’entrée estimé multiplié par cette valeur. La facturation finale repose sur l’utilisation réelle. Les tarifs par requête et par tâche restent inchangés.",
     "Reserved for viewing complete channel keys after secure verification.": "Réservé à l'affichage des clés complètes des canaux après une vérification sécurisée.",
     "Reset": "Réinitialiser",
     "Reset 2FA": "Réinitialiser la 2FA",

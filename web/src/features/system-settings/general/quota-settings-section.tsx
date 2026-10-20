@@ -53,6 +53,16 @@ import { useUpdateOption } from '../hooks/use-update-option'
 
 const quotaSchema = z.object({
   QuotaForNewUser: z.coerce.number().min(0),
+  PreConsumedQuota: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number({ error: () => i18next.t('Please enter a valid number') })
+      .int({ error: () => i18next.t('Please enter a valid number') })
+      .min(0, { error: () => i18next.t('Must be greater than or equal to 0') })
+      .max(1073741823, {
+        error: () => i18next.t('Please enter a valid number'),
+      })
+  ),
   QuotaForInviter: z.coerce.number().min(0),
   QuotaForInvitee: z.coerce.number().min(0),
   TopUpLink: z.string(),
@@ -168,6 +178,33 @@ export function QuotaSettingsSection({
 
             <FormField
               control={form.control}
+              name='PreConsumedQuota'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Pre-Consumed Quota')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={0}
+                      max={1073741823}
+                      step={1}
+                      value={field.value ?? ''}
+                      onChange={handleNumberChange(field.onChange)}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Quota consumed before charging users')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name='quota_setting.trust_quota_usd'
               render={({ field }) => (
                 <FormItem>
@@ -216,7 +253,7 @@ export function QuotaSettingsSection({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'Reserve the estimated input cost multiplied by this value, without estimating output tokens. Defaults to 1; positive decimals such as 0.5 and 1.5 are supported. Final charges use actual usage. Per-request and task prices are unaffected.'
+                      'Reserve the estimated input cost multiplied by this value. Final charges use actual usage. Per-request and task prices are unaffected.'
                     )}
                   </FormDescription>
                   <FormMessage />
