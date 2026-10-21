@@ -883,6 +883,7 @@
     "Cache ratio": "キャッシュ倍率",
     "Cache read price": "キャッシュ読み取り価格",
     "Cache repeated prompt prefixes for cheaper, faster reuse": "繰り返しのプロンプト先頭部分をキャッシュし、低コスト・高速に再利用",
+    "Cache usage is recorded only after the upgrade; historical data is not backfilled.": "キャッシュ使用量はアップグレード後から記録され、過去のデータは補完されません。",
     "Cache write": "キャッシュ書き込み",
     "Cache write price": "キャッシュ書き込み価格",
     "Cached": "キャッシュ",

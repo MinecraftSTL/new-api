@@ -883,6 +883,7 @@
     "Cache ratio": "Cache ratio",
     "Cache read price": "Cache read price",
     "Cache repeated prompt prefixes for cheaper, faster reuse": "Cache repeated prompt prefixes for cheaper, faster reuse",
+    "Cache usage is recorded only after the upgrade; historical data is not backfilled.": "Cache usage is recorded only after the upgrade; historical data is not backfilled.",
     "Cache write": "Cache write",
     "Cache write price": "Cache write price",
     "Cached": "Cached",

@@ -902,3 +902,5 @@ func TestExpressionOutputReservationBranchesAndImageRetry(t *testing.T) {
 		})
 	}
 }
+
+func (s *priceTestReservation) ReserveBeforeSubmit(quota int) error { return s.Reserve(quota) }

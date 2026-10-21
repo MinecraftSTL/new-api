@@ -39,6 +39,8 @@ describe('dashboard billing basis', () => {
         quota_before_group: 100,
         count: 3,
         token_used: 80,
+        cache_read_tokens: 30,
+        cache_creation_tokens: 12,
       },
     ]
 
@@ -46,11 +48,15 @@ describe('dashboard billing basis', () => {
       totalQuota: 240,
       totalCount: 3,
       totalTokens: 80,
+      totalCacheReadTokens: 30,
+      totalCacheCreationTokens: 12,
     })
     expect(calculateDashboardStats(rows, 'before_group')).toEqual({
       totalQuota: 100,
       totalCount: 3,
       totalTokens: 80,
+      totalCacheReadTokens: 30,
+      totalCacheCreationTokens: 12,
     })
   })
 
